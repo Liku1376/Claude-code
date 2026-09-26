@@ -28,13 +28,11 @@ Use **File → Load sample data** to see a filled-in example, then press
 
 ### Publishing a new version
 
-Push a version tag. The **Build desktop app** workflow then builds all three
-apps on GitHub, tests them and attaches them to a new release:
-
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
+On GitHub, open **Actions → Build desktop app → Run workflow**, enter a
+version such as `v1.1.0`, and click **Run workflow**. Pushing a tag such as
+`v1.1.0` does the same. Either way, the workflow builds all three apps, tests
+them and publishes them as a new release with a separate download for each
+system.
 
 ### Building the app yourself
 

@@ -2,7 +2,8 @@ name: Build desktop app
 
 # Builds a standalone Roster Creator for Windows, macOS and Linux.
 # - Every push / manual run: downloadable build artifacts on the run page.
-# - Pushing a tag like v1.0.0: also publishes a GitHub Release with the files.
+# - Pushing a tag like v1.0.0, or running the workflow manually with a
+#   version filled in: also publishes a GitHub Release with the files.
 
 on:
   push:
@@ -10,6 +11,11 @@ on:
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version to publish (e.g. v1.0.0). Leave empty to only build."
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -76,9 +82,11 @@ jobs:
           path: release/*
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.version != ''
     needs: build
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.version || github.ref_name }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -86,6 +94,9 @@ jobs:
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.TAG }}
+          name: Roster Creator ${{ env.TAG }}
+          target_commitish: ${{ github.sha }}
           files: release/*
           generate_release_notes: true
           body: |
@@ -95,8 +106,8 @@ jobs:
 
             | System | Download | How to start |
             | --- | --- | --- |
-            | 🪟 **Windows** | [RosterCreator-Windows.exe](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/RosterCreator-Windows.exe) | Double-click. If SmartScreen appears: **More info → Run anyway** |
-            | 🍎 **macOS** (Apple Silicon) | [RosterCreator-macOS.zip](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/RosterCreator-macOS.zip) | Unzip, then **right-click RosterCreator.app → Open → Open** the first time |
-            | 🐧 **Linux** | [RosterCreator-Linux](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/RosterCreator-Linux) | `chmod +x RosterCreator-Linux && ./RosterCreator-Linux` |
+            | 🪟 **Windows** | [RosterCreator-Windows.exe](https://github.com/${{ github.repository }}/releases/download/${{ env.TAG }}/RosterCreator-Windows.exe) | Double-click. If SmartScreen appears: **More info → Run anyway** |
+            | 🍎 **macOS** (Apple Silicon) | [RosterCreator-macOS.zip](https://github.com/${{ github.repository }}/releases/download/${{ env.TAG }}/RosterCreator-macOS.zip) | Unzip, then **right-click RosterCreator.app → Open → Open** the first time |
+            | 🐧 **Linux** | [RosterCreator-Linux](https://github.com/${{ github.repository }}/releases/download/${{ env.TAG }}/RosterCreator-Linux) | `chmod +x RosterCreator-Linux && ./RosterCreator-Linux` |
 
             Tip: use **File → Load sample data** to try it out.
