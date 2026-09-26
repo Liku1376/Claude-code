@@ -26,6 +26,31 @@ These links always point to the newest release. All versions are on the
 Use **File → Load sample data** to see a filled-in example, then press
 **Generate roster** (top right).
 
+## Run it as a local web app (no installation, no .exe)
+
+If your computer blocks unknown executables, run the tool as a **local web
+page** instead. It uses only Python's standard library — nothing to install —
+and produces no executable file:
+
+```bash
+python roster_web.py
+```
+
+![Web app](docs/web_screenshot.png)
+
+This starts a small server on your own machine and opens
+`http://127.0.0.1:8765/` in your browser. The whole tool runs there, with the
+same rules, generator, carry-over, swaps and exports as the desktop version.
+Leave the terminal window open while you use it, and press Ctrl+C there to
+stop. Options: `--port 9000` to change the port, `--no-browser` to not open a
+browser automatically.
+
+Nothing you enter leaves your machine: the server listens only on
+`127.0.0.1` (localhost), so it is not reachable from the network.
+
+In the web app, **Save roster** downloads a `.json` file and **Open** loads
+one back; Excel, CSV and calendar (.ics) exports download as files.
+
 ### Publishing a new version
 
 On GitHub, open **Actions → Build desktop app → Run workflow**, enter a
@@ -186,7 +211,9 @@ python -m pytest
 | `roster_tool/storage.py` | Roster files, carry-over, change tracking, swaps |
 | `roster_tool/ics.py` | Calendar invite (.ics) export |
 | `roster_tool/datepicker.py` | Calendar date picker |
-| `roster_tool/gui.py` | Tkinter user interface |
+| `roster_tool/gui.py` | Tkinter (desktop) user interface |
+| `roster_tool/webapp.py` | Local web-app server (stdlib HTTP + JSON API) |
+| `roster_tool/web/` | Web-app front end (HTML/CSS/JS) |
 | `roster_tool/theme.py` | Colours, fonts and widget styles |
 | `build.py` | Builds the standalone desktop app with PyInstaller |
 | `.github/workflows/build.yml` | Builds, tests and releases the app for Windows, macOS and Linux |

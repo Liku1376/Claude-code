@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roster Creator</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="logo">📅</div>
+    <div class="titles">
+      <div><strong>Roster Creator</strong></div>
+      <div class="sub">Shift &amp; on-call planner</div>
+    </div>
+    <div class="spacer"></div>
+    <div class="ctx" id="headerCtx"></div>
+    <button class="btn accent" id="genTop">Generate roster ▶</button>
+  </header>
+  <div class="body">
+    <nav class="sidebar">
+      <div class="label">STEPS</div>
+      <div id="steps"></div>
+      <div class="label" style="margin-top:16px">FILE</div>
+      <div class="step" id="mOpen"><span class="name">Open…</span></div>
+      <div class="step" id="mSave"><span class="name">Save roster</span></div>
+      <div class="step" id="mSample"><span class="name">Load sample</span></div>
+      <div class="step" id="mNew"><span class="name">New / clear</span></div>
+    </nav>
+    <main id="main"></main>
+  </div>
+</div>
+<div id="toast">Ready</div>
+<input type="file" id="filepick" accept=".json,application/json" class="hidden">
+<script src="app.js"></script>
+</body>
+</html>

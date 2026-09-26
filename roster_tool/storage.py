@@ -67,8 +67,9 @@ class RosterFile:
     published_at: str = ""
 
 
-def save_roster_file(path: str, inputs: dict, roster: Roster, published: Roster | None = None, published_at: str = "") -> None:
-    data = {
+def roster_file_dict(inputs: dict, roster: Roster, published: Roster | None = None, published_at: str = "") -> dict:
+    """The on-disk roster-file structure, as a plain dict."""
+    return {
         "format": FORMAT,
         "version": VERSION,
         "saved_at": datetime.now().isoformat(timespec="seconds"),
@@ -78,8 +79,11 @@ def save_roster_file(path: str, inputs: dict, roster: Roster, published: Roster 
         "published": _assignments_to_dict(published) if published else None,
         "published_at": published_at,
     }
+
+
+def save_roster_file(path: str, inputs: dict, roster: Roster, published: Roster | None = None, published_at: str = "") -> None:
     with open(path, "w", encoding="utf-8") as fh:
-        json.dump(data, fh, indent=2)
+        json.dump(roster_file_dict(inputs, roster, published, published_at), fh, indent=2)
 
 
 def is_roster_file(data: dict) -> bool:

@@ -36,6 +36,7 @@ def main():
         "--icon", icon,
         "--add-data", f"{os.path.join(ROOT, 'examples', 'sample_config.json')}{SEP}examples",
         "--add-data", f"{os.path.join(ROOT, 'assets', 'icon.png')}{SEP}assets",
+        "--add-data", f"{os.path.join(ROOT, 'roster_tool', 'web')}{SEP}roster_tool/web",
         "--hidden-import", "openpyxl",
         # Not used by the app; keeps the bundle small.
         "--exclude-module", "PIL",
