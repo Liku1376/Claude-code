@@ -9,17 +9,26 @@ from .validator import Issue
 
 # Cell colours (background hex) shared by the GUI and the Excel export.
 CODE_COLORS = {
-    "M": "FFF4B3",
-    "E": "B8DDF7",
-    "N": "4A4E8C",
-    "CO": "C9E7C1",
-    "L": "F7B7B7",
-    "LL": "E58A8A",
-    "WO": "E2E2E2",
-    "H": "D9C8F0",
+    "M": "FEF3C7",
+    "E": "DBEAFE",
+    "N": "312E81",
+    "CO": "D1FAE5",
+    "L": "FEE2E2",
+    "LL": "FCA5A5",
+    "WO": "F3F4F6",
+    "H": "EDE9FE",
 }
-CODE_TEXT_COLORS = {"N": "FFFFFF"}
-DAYTYPE_COLORS = {"Working": "FFFFFF", "Freeze": "FFE0B2", "Weekend": "E2E2E2", "Holiday": "D9C8F0"}
+CODE_TEXT_COLORS = {
+    "M": "92400E",
+    "E": "1E40AF",
+    "N": "FFFFFF",
+    "CO": "065F46",
+    "L": "991B1B",
+    "LL": "7F1D1D",
+    "WO": "9CA3AF",
+    "H": "5B21B6",
+}
+DAYTYPE_COLORS = {"Working": "FFFFFF", "Freeze": "FFEDD5", "Weekend": "F3F4F6", "Holiday": "EDE9FE"}
 
 SUMMARY_KEYS = ("M", "E", "N", "CO", "L", "LL", "Primary", "Secondary")
 

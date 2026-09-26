@@ -7,6 +7,8 @@ is listed so you can fix it.
 
 ![Roster tab](docs/roster_screenshot.png)
 
+![Team tab](docs/team_screenshot.png)
+
 ## Running
 
 Needs Python 3.10+ with Tkinter (`sudo apt install python3-tk` on
@@ -17,18 +19,18 @@ pip install -r requirements.txt   # optional, only for Excel export
 python roster_app.py
 ```
 
-Use **File → Load sample data** to see a filled-in example, then open the
-**8. Roster** tab and press **Generate roster**.
+Use **File → Load sample data** to see a filled-in example, then press
+**Generate roster** (top right).
 
 To generate without the GUI, run
 `python roster_cli.py examples/sample_config.json -o roster.xlsx`.
 
-## Inputs (one tab each)
+## Inputs (one step each in the left sidebar)
 
-| Tab | What you enter |
+| Step | What you enter |
 | --- | --- |
 | 1. Team | Name, designation, and whether the engineer is an **SME** |
-| 2. Month & Calendar | Roster month/year, weekend days, holidays, freeze periods |
+| 2. Calendar | Roster month/year, weekend days, holidays, freeze periods |
 | 3. Leave | Engineer + date or date range (shown as `L`) |
 | 4. Long Leave | Engineer + date range (shown as `LL`) |
 | 5. Shift Requirements | Engineer + dates + Morning/Evening/Night + **Must** (must work that shift) or **Avoid** (never on that shift, e.g. no nights) |
@@ -57,12 +59,15 @@ balances nights, mornings, evenings and on-call duty across the team.
 
 ## Roster tab
 
+- Summary tiles show whether all rules are met, the number of violations and
+  warnings, and how evenly nights and primary on-call are spread.
 - Cells are colour-coded: `M` Morning, `E` Evening, `N` Night, `CO` Comp off,
-  `L` Leave, `LL` Long leave, `WO` Weekend off, `H` Holiday. A small `ᴾ`/`ˢ`
-  marks who is primary/secondary on-call. Freeze days have a `*` after the weekday.
+  `L` Leave, `LL` Long leave, `WO` Weekend off, `H` Holiday. A small indigo dot
+  marks primary on-call and a teal dot marks secondary on-call. Weekend, holiday
+  and freeze columns are shaded.
 - Hover over a cell to see details in the status bar. Click a cell to change
   it by hand. The roster is re-checked straight away, and any day that breaks
-  a rule gets a red border.
+  a rule gets a red dot under its date.
 - The issues panel lists **Errors** (a mandatory rule is broken), **Warnings**
   (a request could not be honoured) and **Info** notes.
 - **Export Excel** creates a colour-coded sheet with a legend and an Issues
@@ -100,3 +105,4 @@ python -m pytest
 | `roster_tool/validator.py` | Rule checks (used for generated and hand-edited rosters) |
 | `roster_tool/export.py` | CSV / Excel export |
 | `roster_tool/gui.py` | Tkinter user interface |
+| `roster_tool/theme.py` | Colours, fonts and widget styles |
