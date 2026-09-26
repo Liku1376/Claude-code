@@ -1,0 +1,183 @@
+import json
+import os
+import random
+from datetime import date, timedelta
+
+import pytest
+
+from roster_tool import export
+from roster_tool.model import (
+    COMP_OFF,
+    HOLIDAY_OFF,
+    LEAVE,
+    LONG_LEAVE,
+    MORNING,
+    NIGHT,
+    WEEK_OFF,
+    RosterConfig,
+    empty_config_dict,
+)
+from roster_tool.scheduler import generate
+from roster_tool.validator import ERROR, WARNING, validate
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def team(non_sme=5, sme=2):
+    return [{"name": f"N{i}", "designation": "Engineer", "sme": False} for i in range(non_sme)] + [
+        {"name": f"S{i}", "designation": "SME", "sme": True} for i in range(sme)
+    ]
+
+
+def config(**overrides):
+    d = empty_config_dict(2026, 10)
+    d["engineers"] = team()
+    d["attempts"] = 40
+    d["seed"] = "1"
+    d.update(overrides)
+    return RosterConfig.from_dict(d)
+
+
+def errors(issues):
+    return [i for i in issues if i.severity == ERROR]
+
+
+def assert_mandatory_rules(roster):
+    cfg = roster.config
+    sme = {e.name for e in cfg.engineers if e.is_sme}
+    for d in cfg.days:
+        dtype = cfg.day_type(d)
+        if dtype == "Working":
+            assert roster.on_shift(d, MORNING), f"no morning on {d}"
+            assert roster.on_shift(d, NIGHT), f"no night on {d}"
+        for n in cfg.engineer_names:
+            if roster.code(n, d) == NIGHT and d != cfg.days[-1]:
+                assert roster.code(n, d + timedelta(days=1)) == COMP_OFF
+        p = roster.primary[d]
+        assert p not in sme
+        assert roster.code(p, d) not in (MORNING, NIGHT, COMP_OFF, LEAVE, LONG_LEAVE)
+        if cfg.is_off_day(d):
+            assert d not in roster.secondary
+        else:
+            assert roster.secondary[d] in sme
+
+
+def test_sample_config_meets_all_rules():
+    with open(os.path.join(ROOT, "examples", "sample_config.json")) as fh:
+        cfg = RosterConfig.from_dict(json.load(fh))
+    roster, issues = generate(cfg)
+    assert errors(issues) == []
+    assert [i for i in issues if i.severity == WARNING] == []
+    assert_mandatory_rules(roster)
+
+
+def test_weekends_holidays_and_freeze():
+    cfg = config(
+        holidays=[{"date": "2026-10-02", "name": "Holiday"}],
+        freeze_periods=[{"start": "26", "end": "30"}],
+    )
+    roster, issues = generate(cfg)
+    assert errors(issues) == []
+    assert_mandatory_rules(roster)
+    assert cfg.day_type(date(2026, 10, 2)) == "Holiday"
+    assert cfg.day_type(date(2026, 10, 3)) == "Weekend"
+    assert cfg.day_type(date(2026, 10, 27)) == "Freeze"
+    # Holidays/weekends: nobody works by default (except comp offs/leave).
+    assert all(roster.code(n, date(2026, 10, 2)) in (HOLIDAY_OFF, COMP_OFF) for n in cfg.engineer_names)
+    assert all(roster.code(n, date(2026, 10, 4)) == WEEK_OFF for n in cfg.engineer_names)
+    # Freeze days are not forced to have a night shift.
+    assert not roster.on_shift(date(2026, 10, 27), NIGHT)
+
+
+def test_leave_long_leave_and_requirements_honoured():
+    cfg = config(
+        leaves=[{"engineer": "N0", "start": "5", "end": "6"}],
+        long_leaves=[{"engineer": "N1", "start": "12", "end": "23"}],
+        requirements=[
+            {"engineer": "N2", "start": "1", "end": "9", "shift": "Morning", "mode": "Must"},
+            {"engineer": "N3", "start": "1", "end": "31", "shift": "Night", "mode": "Avoid"},
+        ],
+    )
+    roster, issues = generate(cfg)
+    assert errors(issues) == []
+    assert roster.code("N0", date(2026, 10, 5)) == LEAVE
+    assert all(roster.code("N1", date(2026, 10, d)) == LONG_LEAVE for d in range(12, 24))
+    assert all(roster.code("N2", d) == MORNING for d in cfg.days[:9] if not cfg.is_off_day(d))
+    assert all(roster.code("N3", d) != NIGHT for d in cfg.days)
+
+
+def test_oncall_override_used():
+    cfg = config(oncall=[{"date": "7", "primary": "N4", "secondary": "S1"}])
+    roster, issues = generate(cfg)
+    assert errors(issues) == []
+    assert roster.primary[date(2026, 10, 7)] == "N4"
+    assert roster.secondary[date(2026, 10, 7)] == "S1"
+
+
+def test_oncall_is_rotated_fairly():
+    cfg = config()
+    roster, _ = generate(cfg)
+    primaries = [roster.counts(f"N{i}")["Primary"] for i in range(5)]
+    secondaries = [roster.counts(f"S{i}")["Secondary"] for i in range(2)]
+    assert max(primaries) - min(primaries) <= 2
+    assert max(secondaries) - min(secondaries) <= 1
+
+
+def test_validator_flags_manual_violations():
+    cfg = config()
+    roster, _ = generate(cfg)
+    d = date(2026, 10, 1)
+    night = roster.on_shift(d, NIGHT)[0]
+    roster.grid[night][d + timedelta(days=1)] = MORNING  # no comp off
+    roster.primary[d] = "S0"  # SME as primary
+    msgs = [i.message for i in errors(validate(roster))]
+    assert any("not on comp off" in m for m in msgs)
+    assert any("is an SME" in m for m in msgs)
+
+
+def test_infeasible_inputs_are_reported_not_crashing():
+    # Only SMEs -> no primary on-call possible.
+    cfg = config(engineers=team(non_sme=0, sme=2))
+    roster, issues = generate(cfg)
+    assert any("No primary on-call" in i.message for i in errors(issues))
+
+
+def test_bad_input_raises_readable_error():
+    with pytest.raises(ValueError, match="unknown engineer"):
+        config(leaves=[{"engineer": "Nobody", "start": "1"}])
+    with pytest.raises(ValueError, match="invalid date"):
+        config(holidays=[{"date": "tomorrow"}])
+
+
+@pytest.mark.parametrize("seed", range(15))
+def test_random_scenarios_keep_mandatory_rules(seed):
+    rng = random.Random(seed)
+    non_sme, sme = rng.randint(5, 9), rng.randint(2, 4)
+    names = [f"N{i}" for i in range(non_sme)]
+    leaves = []
+    for _ in range(rng.randint(0, 4)):
+        start = rng.randint(1, 28)
+        leaves.append({"engineer": rng.choice(names), "start": str(start), "end": str(start + rng.randint(0, 2))})
+    cfg = config(
+        engineers=team(non_sme, sme),
+        leaves=leaves,
+        holidays=[{"date": str(rng.randint(1, 31))}],
+        freeze_periods=[{"start": "24", "end": "27"}] if seed % 2 else [],
+        seed=str(seed),
+    )
+    roster, issues = generate(cfg)
+    assert errors(issues) == []
+    assert_mandatory_rules(roster)
+
+
+def test_exports(tmp_path):
+    cfg = config()
+    roster, issues = generate(cfg)
+    csv_path = tmp_path / "r.csv"
+    export.to_csv(roster, str(csv_path))
+    text = csv_path.read_text()
+    assert "Primary on-call" in text and "N0" in text
+    pytest.importorskip("openpyxl")
+    xlsx = tmp_path / "r.xlsx"
+    export.to_excel(roster, str(xlsx), issues)
+    assert xlsx.stat().st_size > 0

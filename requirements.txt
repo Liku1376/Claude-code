@@ -1,0 +1,3 @@
+# Optional - only needed for Excel export. The GUI itself uses Tkinter from
+# the Python standard library.
+openpyxl>=3.1

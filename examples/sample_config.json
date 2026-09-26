@@ -1,0 +1,42 @@
+{
+  "year": 2026,
+  "month": 10,
+  "engineers": [
+    {"name": "Asha", "designation": "Engineer", "sme": false},
+    {"name": "Bala", "designation": "Engineer", "sme": false},
+    {"name": "Chitra", "designation": "Senior Engineer", "sme": false},
+    {"name": "Dev", "designation": "Engineer", "sme": false},
+    {"name": "Gita", "designation": "Engineer", "sme": false},
+    {"name": "Esha", "designation": "Lead Engineer", "sme": true},
+    {"name": "Farhan", "designation": "SME", "sme": true}
+  ],
+  "leaves": [
+    {"engineer": "Asha", "start": "2026-10-05", "end": "2026-10-06", "note": "Personal"}
+  ],
+  "long_leaves": [
+    {"engineer": "Dev", "start": "2026-10-12", "end": "2026-10-23", "note": "Vacation"}
+  ],
+  "requirements": [
+    {"engineer": "Chitra", "start": "2026-10-01", "end": "2026-10-09", "shift": "Morning", "mode": "Must", "note": "Training"},
+    {"engineer": "Gita", "start": "2026-10-01", "end": "2026-10-31", "shift": "Night", "mode": "Avoid", "note": "No nights"}
+  ],
+  "oncall": [
+    {"date": "2026-10-07", "primary": "Bala", "secondary": "Farhan"}
+  ],
+  "holidays": [
+    {"date": "2026-10-02", "name": "Gandhi Jayanti"},
+    {"date": "2026-10-20", "name": "Diwali"}
+  ],
+  "freeze_periods": [
+    {"start": "2026-10-28", "end": "2026-10-31", "note": "Release freeze"}
+  ],
+  "weekend_days": [5, 6],
+  "min_coverage": {
+    "Working": {"Morning": 1, "Evening": 0, "Night": 1},
+    "Freeze": {"Morning": 0, "Evening": 0, "Night": 0},
+    "Weekend": {"Morning": 0, "Evening": 0, "Night": 0},
+    "Holiday": {"Morning": 0, "Evening": 0, "Night": 0}
+  },
+  "attempts": 300,
+  "seed": "42"
+}
