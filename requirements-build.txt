@@ -1,0 +1,4 @@
+pyinstaller>=6.0
+openpyxl>=3.1
+# Lets PyInstaller convert the PNG icon for macOS builds.
+pillow>=10.0

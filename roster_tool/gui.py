@@ -6,6 +6,7 @@ import calendar
 import json
 import os
 import statistics
+import sys
 import tkinter as tk
 from datetime import date
 from tkinter import filedialog, messagebox, ttk
@@ -26,7 +27,11 @@ from .model import (
 from .scheduler import generate
 from .validator import ERROR, INFO, WARNING, count, validate
 
-SAMPLE_CONFIG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "examples", "sample_config.json")
+# Bundled files live next to the package when run from source, or in the
+# PyInstaller extraction folder (sys._MEIPASS) when run as a packaged app.
+BASE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+SAMPLE_CONFIG = os.path.join(BASE_DIR, "examples", "sample_config.json")
+ICON_PNG = os.path.join(BASE_DIR, "assets", "icon.png")
 DATE_HINT = "Dates: YYYY-MM-DD, DD/MM/YYYY or just the day number of the roster month."
 LEGEND_NAMES = {"M": "Morning", "E": "Evening", "N": "Night", "CO": "Comp off", "L": "Leave", "LL": "Long leave", "WO": "Weekend", "H": "Holiday"}
 DESIGNATIONS = ("Engineer", "Senior Engineer", "Lead Engineer", "SME", "Manager")
@@ -507,6 +512,12 @@ class RosterApp(tk.Tk):
         self.geometry("1360x840")
         self.minsize(1000, 640)
         T.apply_theme(self)
+        try:
+            self._icon = tk.PhotoImage(file=ICON_PNG)
+            self.iconphoto(True, self._icon)
+        except tk.TclError:
+            pass
+        self.last_dir = os.path.expanduser("~")
         self.roster: Roster | None = None
         self.issues = []
         self.config_path: str | None = None
@@ -857,7 +868,7 @@ class RosterApp(tk.Tk):
             self.load_dict(empty_config_dict())
 
     def open_config(self):
-        path = filedialog.askopenfilename(parent=self, filetypes=[("Roster inputs", "*.json"), ("All files", "*")])
+        path = filedialog.askopenfilename(parent=self, initialdir=self.last_dir, filetypes=[("Roster inputs", "*.json"), ("All files", "*")])
         if path:
             self._open_path(path)
 
@@ -869,21 +880,26 @@ class RosterApp(tk.Tk):
             messagebox.showerror("Open failed", str(exc), parent=self)
             return
         self.config_path = path
+        self._remember_dir(path)
         self.status.set(f"Loaded {path}")
 
     def load_sample(self):
+        last_dir = self.last_dir
         self._open_path(SAMPLE_CONFIG)
+        # Don't point file dialogs or "Save" at the bundled sample.
         self.config_path = None
+        self.last_dir = last_dir
 
     def save_config(self, ask=False):
         path = self.config_path
         if ask or not path:
-            path = filedialog.asksaveasfilename(parent=self, defaultextension=".json", filetypes=[("Roster inputs", "*.json")])
+            path = filedialog.asksaveasfilename(parent=self, initialdir=self.last_dir, defaultextension=".json", filetypes=[("Roster inputs", "*.json")])
             if not path:
                 return
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(self.collect_dict(), fh, indent=2)
         self.config_path = path
+        self._remember_dir(path)
         self.status.set(f"Saved {path}")
 
     # -- roster ----------------------------------------------------------------
@@ -947,6 +963,9 @@ class RosterApp(tk.Tk):
             self.tiles["Primary on-call per person"].set(f"{min(prim)}–{max(prim)}", f"across {len(prim)} non-SME engineers")
         self.status.set("Roster ready - hover over a cell for details, click to edit")
 
+    def _remember_dir(self, path):
+        self.last_dir = os.path.dirname(os.path.abspath(path))
+
     def _require_roster(self):
         if not self.roster:
             messagebox.showinfo("No roster", "Generate a roster first", parent=self)
@@ -960,10 +979,11 @@ class RosterApp(tk.Tk):
     def export_excel(self):
         if not self._require_roster():
             return
-        path = filedialog.asksaveasfilename(parent=self, defaultextension=".xlsx", initialfile=self._default_name("xlsx"), filetypes=[("Excel", "*.xlsx")])
+        path = filedialog.asksaveasfilename(parent=self, initialdir=self.last_dir, defaultextension=".xlsx", initialfile=self._default_name("xlsx"), filetypes=[("Excel", "*.xlsx")])
         if path:
             try:
                 export.to_excel(self.roster, path, self.issues)
+                self._remember_dir(path)
                 self.status.set(f"Exported {path}")
             except (OSError, RuntimeError) as exc:
                 messagebox.showerror("Export failed", str(exc), parent=self)
@@ -971,10 +991,11 @@ class RosterApp(tk.Tk):
     def export_csv(self):
         if not self._require_roster():
             return
-        path = filedialog.asksaveasfilename(parent=self, defaultextension=".csv", initialfile=self._default_name("csv"), filetypes=[("CSV", "*.csv")])
+        path = filedialog.asksaveasfilename(parent=self, initialdir=self.last_dir, defaultextension=".csv", initialfile=self._default_name("csv"), filetypes=[("CSV", "*.csv")])
         if path:
             try:
                 export.to_csv(self.roster, path)
+                self._remember_dir(path)
                 self.status.set(f"Exported {path}")
             except OSError as exc:
                 messagebox.showerror("Export failed", str(exc), parent=self)

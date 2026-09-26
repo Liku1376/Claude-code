@@ -9,18 +9,49 @@ is listed so you can fix it.
 
 ![Team tab](docs/team_screenshot.png)
 
-## Running
+## Download and run (no installation needed)
 
-Needs Python 3.10+ with Tkinter (`sudo apt install python3-tk` on
-Debian/Ubuntu; the python.org installers for Windows/macOS already include it).
+Download the file for your computer from the repository's **Releases** page
+(or from the latest **Actions → Build desktop app** run under "Artifacts").
+Python, Tkinter and the Excel library are all bundled inside.
+
+| System | File | How to start |
+| --- | --- | --- |
+| Windows | `RosterCreator-Windows.exe` | Double-click it. If SmartScreen says "Windows protected your PC", click **More info → Run anyway** (the app is not code-signed). |
+| macOS (Apple Silicon) | `RosterCreator-macOS.zip` | Unzip, then **right-click RosterCreator.app → Open → Open** the first time (the app is not notarised). |
+| Linux | `RosterCreator-Linux` | `chmod +x RosterCreator-Linux && ./RosterCreator-Linux` |
+
+Use **File → Load sample data** to see a filled-in example, then press
+**Generate roster** (top right).
+
+### Publishing a new version
+
+Push a version tag. The **Build desktop app** workflow then builds all three
+apps on GitHub, tests them and attaches them to a new release:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+### Building the app yourself
+
+```bash
+pip install -r requirements-build.txt
+python build.py            # output in dist/
+```
+
+PyInstaller only builds for the system it runs on. To get a Windows `.exe`,
+run this on Windows; to get the macOS app, run it on a Mac.
+
+### Running from source
+
+Needs Python 3.10+ with Tkinter.
 
 ```bash
 pip install -r requirements.txt   # optional, only for Excel export
 python roster_app.py
 ```
-
-Use **File → Load sample data** to see a filled-in example, then press
-**Generate roster** (top right).
 
 To generate without the GUI, run
 `python roster_cli.py examples/sample_config.json -o roster.xlsx`.
@@ -106,3 +137,5 @@ python -m pytest
 | `roster_tool/export.py` | CSV / Excel export |
 | `roster_tool/gui.py` | Tkinter user interface |
 | `roster_tool/theme.py` | Colours, fonts and widget styles |
+| `build.py` | Builds the standalone desktop app with PyInstaller |
+| `.github/workflows/build.yml` | Builds, tests and releases the app for Windows, macOS and Linux |

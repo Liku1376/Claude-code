@@ -1,0 +1,90 @@
+name: Build desktop app
+
+# Builds a standalone Roster Creator for Windows, macOS and Linux.
+# - Every push / manual run: downloadable build artifacts on the run page.
+# - Pushing a tag like v1.0.0: also publishes a GitHub Release with the files.
+
+on:
+  push:
+    branches: [main, "claude/**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows
+          - os: macos-latest
+            label: macOS
+          - os: ubuntu-22.04
+            label: Linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-build.txt pytest
+
+      - name: Run tests
+        run: python -m pytest -q
+
+      - name: Build app
+        run: python build.py
+
+      - name: Self-test packaged app (Linux)
+        if: runner.os == 'Linux'
+        run: ./dist/RosterCreator --selftest
+
+      - name: Self-test packaged app (macOS)
+        if: runner.os == 'macOS'
+        run: ./dist/RosterCreator.app/Contents/MacOS/RosterCreator --selftest
+
+      - name: Self-test packaged app (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\RosterCreator.exe -ArgumentList '--selftest' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Self-test failed with exit code $($p.ExitCode)" }
+
+      - name: Collect release file
+        shell: bash
+        run: |
+          mkdir -p release
+          case "${{ runner.os }}" in
+            Windows) cp dist/RosterCreator.exe release/RosterCreator-Windows.exe ;;
+            macOS)   cp dist/RosterCreator-macOS.zip release/RosterCreator-macOS.zip ;;
+            Linux)   cp dist/RosterCreator release/RosterCreator-Linux && chmod +x release/RosterCreator-Linux ;;
+          esac
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RosterCreator-${{ matrix.label }}
+          path: release/*
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
