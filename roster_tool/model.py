@@ -46,8 +46,15 @@ DAY_TYPES = (WORKING, FREEZE, WEEKEND, HOLIDAY)
 
 MUST = "Must"
 AVOID = "Avoid"
+PREFER = "Prefer"
+REQUEST_MODES = (MUST, PREFER, AVOID)
 
 WEEKDAY_NAMES = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+DEFAULT_SHIFT_TIMES = {MORNING: ("06:00", "14:00"), EVENING: ("14:00", "22:00"), NIGHT: ("22:00", "06:00")}
+
+# Counters carried from month to month for fairness (see Roster.counts).
+CARRY_KEYS = (MORNING, EVENING, NIGHT, "Primary", "Secondary", "OffDayPrimary")
 
 DEFAULT_MIN_COVERAGE = {
     WORKING: {MORNING: 1, EVENING: 0, NIGHT: 1},
@@ -81,6 +88,14 @@ def parse_range(start, end, year=None, month=None) -> tuple[date, date]:
     if e < s:
         raise ValueError(f"end date {e} is before start date {s}")
     return s, e
+
+
+def parse_time(value) -> str:
+    text = str(value).strip()
+    try:
+        return datetime.strptime(text, "%H:%M").strftime("%H:%M")
+    except ValueError:
+        raise ValueError(f"invalid time '{text}' (use HH:MM, e.g. 06:00)")
 
 
 def parse_bool(value) -> bool:
@@ -176,6 +191,11 @@ class RosterConfig:
     )
     attempts: int = 300
     seed: int | None = None
+    shift_times: dict[str, tuple[str, str]] = field(default_factory=lambda: dict(DEFAULT_SHIFT_TIMES))
+    # Carry-over from the previous month's roster.
+    carry_source: str = ""
+    carry_nights: list[tuple[str, date]] = field(default_factory=list)  # nights whose comp off is still due
+    prior_counts: dict[str, dict[str, int]] = field(default_factory=dict)  # running totals for fairness
 
     # ---- calendar helpers -------------------------------------------------
     @property
@@ -236,6 +256,25 @@ class RosterConfig:
             if r.engineer == name and r.mode == MUST and r.covers(d):
                 return r.shift
         return None
+
+    def preferred_shift(self, name: str, d: date) -> str | None:
+        """Soft preference - honoured when the rules allow (working days only)."""
+        if self.is_off_day(d):
+            return None
+        for r in self.requirements:
+            if r.engineer == name and r.mode == PREFER and r.covers(d):
+                return r.shift
+        return None
+
+    def carried_comp_offs(self) -> dict[str, date]:
+        """Comp offs from last month's nights that fall in this month."""
+        days = set(self.days)
+        out = {}
+        for name, night in self.carry_nights:
+            co = self.comp_off_day(night)
+            if co in days and self.engineer(name):
+                out[name] = co
+        return out
 
     def avoided_shifts(self, name: str, d: date) -> set[str]:
         return {
@@ -302,8 +341,8 @@ class RosterConfig:
                 s, e = parse_range(row.get("start"), row.get("end"), year, month)
                 shift = parse_shift(row.get("shift"))
                 mode = str(row.get("mode", MUST)).strip().capitalize() or MUST
-                if mode not in (MUST, AVOID):
-                    raise ValueError(f"invalid type '{mode}' (use Must or Avoid)")
+                if mode not in REQUEST_MODES:
+                    raise ValueError(f"invalid type '{mode}' (use Must, Prefer or Avoid)")
             except ValueError as exc:
                 errors.append(f"Shift requirement #{i} ({name}): {exc}")
                 continue
@@ -352,6 +391,23 @@ class RosterConfig:
                 except ValueError:
                     errors.append(f"Minimum coverage {dtype}/{shift}: invalid number '{value}'")
 
+        for shift_name, times in (data.get("shift_times") or {}).items():
+            try:
+                shift = parse_shift(shift_name)
+                cfg.shift_times[shift] = (parse_time(times.get("start")), parse_time(times.get("end")))
+            except (ValueError, AttributeError) as exc:
+                errors.append(f"Shift timing {shift_name}: {exc}")
+
+        carry = data.get("carry_over") or {}
+        cfg.carry_source = str(carry.get("source", ""))
+        for row in carry.get("nights", []):
+            try:
+                cfg.carry_nights.append((str(row["engineer"]), parse_date(row["date"])))
+            except (KeyError, ValueError):
+                errors.append(f"Carry-over night {row}: invalid")
+        for name, counts in (carry.get("prior_counts") or {}).items():
+            cfg.prior_counts[name] = {k: int(v) for k, v in counts.items() if k in CARRY_KEYS}
+
         try:
             cfg.attempts = max(1, int(data.get("attempts", cfg.attempts)))
         except (TypeError, ValueError):
@@ -388,7 +444,27 @@ def empty_config_dict(year: int | None = None, month: int | None = None) -> dict
         "min_coverage": {k: {SHIFT_NAMES[s]: n for s, n in v.items()} for k, v in DEFAULT_MIN_COVERAGE.items()},
         "attempts": 300,
         "seed": "",
+        "shift_times": {SHIFT_NAMES[s]: {"start": a, "end": b} for s, (a, b) in DEFAULT_SHIFT_TIMES.items()},
+        "carry_over": {},
     }
+
+
+@dataclass
+class Locks:
+    """Cells the user has pinned. Generation keeps them and fills the rest."""
+
+    cells: dict[tuple[str, date], str] = field(default_factory=dict)  # (engineer, day) -> code
+    primary: dict[date, str] = field(default_factory=dict)
+    secondary: dict[date, str] = field(default_factory=dict)
+
+    def __bool__(self) -> bool:
+        return bool(self.cells or self.primary or self.secondary)
+
+    def cell(self, name: str, d: date) -> str | None:
+        return self.cells.get((name, d))
+
+    def copy(self) -> "Locks":
+        return Locks(dict(self.cells), dict(self.primary), dict(self.secondary))
 
 
 @dataclass
@@ -399,6 +475,7 @@ class Roster:
     grid: dict[str, dict[date, str]]  # engineer -> day -> code
     primary: dict[date, str]  # day -> engineer ("" if none)
     secondary: dict[date, str]
+    locks: Locks = field(default_factory=Locks)
 
     @property
     def days(self) -> list[date]:
@@ -418,4 +495,21 @@ class Roster:
                 result[c] += 1
         result["Primary"] = sum(1 for d in self.days if self.primary.get(d) == name)
         result["Secondary"] = sum(1 for d in self.days if self.secondary.get(d) == name)
+        result["OffDayPrimary"] = sum(1 for d in self.days if self.primary.get(d) == name and self.config.is_off_day(d))
         return result
+
+    def total_counts(self, name: str) -> dict[str, int]:
+        """This month's counts plus the carried-over running totals."""
+        result = self.counts(name)
+        for k, v in self.config.prior_counts.get(name, {}).items():
+            result[k] = result.get(k, 0) + v
+        return result
+
+    def copy(self) -> "Roster":
+        return Roster(
+            self.config,
+            {n: dict(days) for n, days in self.grid.items()},
+            dict(self.primary),
+            dict(self.secondary),
+            self.locks.copy(),
+        )

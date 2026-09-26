@@ -222,3 +222,130 @@ def test_comp_off_on_weekend_is_flagged():
     roster.grid["N0"][date(2026, 10, 10)] = COMP_OFF  # a Saturday
     msgs = [i.message for i in errors(validate(roster))]
     assert any("comp offs must be on working days" in m for m in msgs)
+
+
+# ---- v1.2 features -----------------------------------------------------------
+from roster_tool import ics, storage  # noqa: E402
+from roster_tool.model import Locks  # noqa: E402
+from roster_tool.validator import INFO, precheck, preference_stats  # noqa: E402
+
+
+def test_locked_cells_survive_regenerate():
+    cfg = config()
+    d = date(2026, 10, 14)
+    locks = Locks({("N0", d): NIGHT, ("N1", date(2026, 10, 6)): LEAVE}, {date(2026, 10, 7): "N2"})
+    roster, issues = generate(cfg, locks)
+    assert roster.code("N0", d) == NIGHT
+    assert roster.code("N0", date(2026, 10, 15)) == COMP_OFF
+    assert roster.code("N1", date(2026, 10, 6)) == LEAVE
+    assert roster.primary[date(2026, 10, 7)] == "N2"
+    assert errors(issues) == []
+    assert roster.locks.cells[("N0", d)] == NIGHT
+
+
+def test_regenerate_against_published_changes_little():
+    cfg = config()
+    published, _ = generate(cfg)
+    cfg2 = config(leaves=[{"engineer": "N0", "start": "20", "end": "21"}])
+    roster, issues = generate(cfg2, baseline=published)
+    assert errors(issues) == []
+    changes = storage.diff(published, roster)
+    free, _ = generate(cfg2)
+    assert len(changes) < len(storage.diff(published, free))
+    assert len(changes) <= 12
+
+
+def test_preferences_are_mostly_met():
+    cfg = config(requirements=[{"engineer": "N0", "start": "1", "end": "31", "shift": "Morning", "mode": "Prefer"}])
+    roster, issues = generate(cfg)
+    assert errors(issues) == []
+    met, requested = preference_stats(roster)
+    assert requested > 0 and met / requested >= 0.6
+    assert any(i.severity == INFO and "preferences met" in i.message for i in issues)
+
+
+def test_carry_over_comp_off_and_fairness():
+    oct_cfg = config()
+    oct_roster, _ = generate(oct_cfg)
+    # Force a night on Fri 30 Oct so its comp off falls on Mon 2 Nov.
+    oct_roster.grid["N0"][date(2026, 10, 30)] = NIGHT
+    carry = storage.carry_over_from(oct_roster)
+    assert {"engineer": "N0", "date": "2026-10-30"} in carry["nights"]
+    nov = RosterConfig.from_dict({**empty_config_dict(2026, 11), "engineers": team(), "attempts": 40, "seed": "1", "carry_over": carry})
+    assert nov.carried_comp_offs()["N0"] == date(2026, 11, 2)
+    roster, issues = generate(nov)
+    assert errors(issues) == []
+    assert roster.code("N0", date(2026, 11, 2)) == COMP_OFF
+    assert roster.primary[date(2026, 11, 1)] != "N0"
+    totals = [roster.total_counts(n)[NIGHT] for n in nov.engineer_names]
+    assert max(totals) - min(totals) <= 2
+
+
+def test_precheck_flags_understaffed_days():
+    everyone_off = [{"engineer": f"N{i}", "start": "14"} for i in range(5)]
+    cfg = config(leaves=everyone_off)
+    msgs = [i.message for i in precheck(cfg) if i.day == date(2026, 10, 14)]
+    assert any("primary on-call" in m for m in msgs)
+    assert precheck(config()) == []
+
+
+def test_swap_moves_duties_and_locks():
+    cfg = config()
+    roster, _ = generate(cfg)
+    d = date(2026, 10, 7)
+    p = roster.primary[d]
+    other = next(n for n in cfg.engineer_names if n != p and not cfg.engineer(n).is_sme)
+    new = storage.swap(roster, p, other, d)
+    assert new.primary[d] == other
+    assert new.code(p, d) == roster.code(other, d)
+    assert (p, d) in new.locks.cells and new.locks.primary[d] == other
+    assert roster.primary[d] == p  # original untouched
+    whos = {c.who for c in storage.diff(roster, new)}
+    assert "Primary on-call" in whos
+
+
+def test_roster_file_roundtrip(tmp_path):
+    inputs = {**empty_config_dict(2026, 10), "engineers": team(), "attempts": 10, "seed": "3"}
+    cfg = RosterConfig.from_dict(inputs)
+    roster, _ = generate(cfg, Locks({("N0", date(2026, 10, 5)): MORNING}))
+    published = roster.copy()
+    roster.grid["N1"][date(2026, 10, 6)] = LEAVE
+    path = tmp_path / "oct.json"
+    storage.save_roster_file(str(path), inputs, roster, published, "today")
+    rf = storage.load_roster_file(str(path))
+    assert rf.roster.grid == roster.grid
+    assert rf.roster.primary == roster.primary
+    assert rf.roster.locks.cells == roster.locks.cells
+    assert rf.published.grid == published.grid
+    assert len(storage.diff(rf.published, rf.roster)) == 1
+
+
+def test_ics_export(tmp_path):
+    cfg = config()
+    roster, _ = generate(cfg)
+    text = ics.build_calendar(roster, "N0")
+    assert text.startswith("BEGIN:VCALENDAR") and text.rstrip().endswith("END:VCALENDAR")
+    assert text.count("BEGIN:VEVENT") == text.count("END:VEVENT") > 0
+    night = next(d for d in roster.days if roster.code("N0", d) == NIGHT)
+    assert f"DTSTART:{night:%Y%m%d}T220000" in text
+    assert f"DTEND:{night + timedelta(days=1):%Y%m%d}T060000" in text
+    assert all(len(line.encode()) <= 75 for line in text.split("\r\n"))
+    paths = ics.export_all(roster, str(tmp_path))
+    assert len(paths) == len(cfg.engineers) + 1
+
+
+def test_swapping_a_night_moves_its_comp_off():
+    cfg = config()
+    roster, _ = generate(cfg)
+    d = next(day for day in roster.days if not cfg.is_off_day(day) and roster.on_shift(day, NIGHT)
+             and cfg.comp_off_day(day) <= roster.days[-1])
+    worker = roster.on_shift(d, NIGHT)[0]
+    co = cfg.comp_off_day(d)
+    other = next(n for n in cfg.engineer_names
+                 if roster.code(n, d) in (MORNING, "E") and roster.code(n, co) in (MORNING, "E")
+                 and n not in (roster.primary.get(d), roster.secondary.get(d)))
+    new = storage.swap(roster, worker, other, d)
+    assert new.code(other, d) == NIGHT and new.code(other, co) == COMP_OFF
+    assert new.code(worker, co) == roster.code(other, co)
+    comp_off_errors = [i for i in errors(validate(new)) if "comp off" in i.message]
+    assert comp_off_errors == []

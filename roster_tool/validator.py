@@ -1,7 +1,7 @@
 """Checks a roster against the mandatory rules and the user's requests.
 
 Errors are violations of mandatory rules; warnings are requests that could
-not be honoured (leave, shift requirements) or informational notes.
+not be honoured (leave, shift requirements); info lines are notes.
 """
 
 from __future__ import annotations
@@ -14,12 +14,15 @@ from .model import (
     COMP_OFF,
     LEAVE,
     LONG_LEAVE,
+    EVENING,
     MORNING,
     NIGHT,
     SHIFT_NAMES,
     SHIFTS,
     WORKING_CODES,
+    Locks,
     Roster,
+    RosterConfig,
 )
 
 ERROR = "Error"
@@ -43,6 +46,16 @@ def validate(roster: Roster) -> list[Issue]:
     issues: list[Issue] = []
     days = roster.days
     last_day = days[-1]
+
+    # Comp offs still due for nights worked at the end of last month.
+    for name, co in cfg.carried_comp_offs().items():
+        if roster.code(name, co) != COMP_OFF:
+            issues.append(Issue(ERROR, co, f"{name} has a comp off due from last month's night shift on this day"))
+        for rest in days:
+            if rest >= co:
+                break
+            if roster.code(name, rest) in WORKING_CODES:
+                issues.append(Issue(ERROR, rest, f"{name} is rostered to work before taking last month's comp off"))
 
     for d in days:
         dtype = cfg.day_type(d)
@@ -126,8 +139,66 @@ def validate(roster: Roster) -> list[Issue]:
             if ov.secondary and ov.secondary != s:
                 issues.append(Issue(WARNING, d, f"Requested secondary on-call {ov.secondary} could not be used"))
 
+    met, requested = preference_stats(roster)
+    if requested:
+        issues.append(Issue(INFO, None, f"Shift preferences met on {met} of {requested} requested working days"))
+
     order = {ERROR: 0, WARNING: 1, INFO: 2}
     issues.sort(key=lambda i: (order[i.severity], i.day or date.min))
+    return issues
+
+
+def preference_stats(roster: Roster) -> tuple[int, int]:
+    """(days a preferred shift was given, working days with a preference)."""
+    cfg = roster.config
+    met = requested = 0
+    for e in cfg.engineers:
+        for d in roster.days:
+            pref = cfg.preferred_shift(e.name, d)
+            code = roster.code(e.name, d)
+            if pref and code in WORKING_CODES:
+                requested += 1
+                met += code == pref
+    return met, requested
+
+
+def precheck(cfg: RosterConfig, locks: Locks | None = None) -> list[Issue]:
+    """Quick capacity check before generating: flags days where too few
+    engineers are available to meet the rules at all."""
+    locks = locks or Locks()
+    issues: list[Issue] = []
+    carried = cfg.carried_comp_offs()
+    sme = {e.name for e in cfg.engineers if e.is_sme}
+    for d in cfg.days:
+        off_day = cfg.is_off_day(d)
+        mins = cfg.min_coverage.get(cfg.day_type(d), {})
+        available = []
+        for n in cfg.engineer_names:
+            locked = locks.cell(n, d)
+            if locked is not None:
+                if locked in SHIFTS:
+                    available.append(n)
+                continue
+            if cfg.leave_on(n, d) or carried.get(n) == d:
+                continue
+            available.append(n)
+        non_sme = [n for n in available if n not in sme]
+        smes = [n for n in available if n in sme]
+        if not non_sme:
+            issues.append(Issue(WARNING, d, "No non-SME engineer available for primary on-call"))
+        if not off_day and not smes:
+            issues.append(Issue(WARNING, d, "No SME available for secondary on-call"))
+        m, e, n = mins.get(MORNING, 0), mins.get(EVENING, 0), mins.get(NIGHT, 0)
+        # On working days the primary on-call covers an Evening slot; on days
+        # off they are on call from home, so they can't fill a shift.
+        need = m + n + (max(e, 1) if not off_day else e + 1)
+        if len(available) < need:
+            parts = [f"{SHIFT_NAMES[sh]} {k}" for sh, k in ((MORNING, m), (EVENING, e), (NIGHT, n)) if k]
+            issues.append(Issue(
+                WARNING, d,
+                f"Only {len(available)} engineer(s) available but at least {need} needed "
+                f"({', '.join(parts + ['primary on-call'])})",
+            ))
     return issues
 
 

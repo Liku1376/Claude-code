@@ -55,6 +55,8 @@ python roster_app.py
 
 To generate without the GUI, run
 `python roster_cli.py examples/sample_config.json -o roster.xlsx`.
+Add `--previous last_month_roster.json` for carry-over,
+`--save roster.json` to save a roster file, and `--ics folder/` for calendar invites.
 
 ## Inputs (one step each in the left sidebar)
 
@@ -64,9 +66,9 @@ To generate without the GUI, run
 | 2. Calendar | Roster month/year, weekend days, holidays, freeze periods |
 | 3. Leave | Engineer + date or date range (shown as `L`) |
 | 4. Long Leave | Engineer + date range (shown as `LL`) |
-| 5. Shift Requirements | Engineer + dates + Morning/Evening/Night + **Must** (must work that shift) or **Avoid** (never on that shift, e.g. no nights) |
+| 5. Shift Requirements | Engineer + dates + Morning/Evening/Night + **Must** (always that shift), **Prefer** (that shift when the rules allow) or **Avoid** (never that shift, e.g. no nights) |
 | 6. On-Call | Optional: fix the primary/secondary on-call engineer for a given day. Every other day is assigned automatically, rotating fairly |
-| 7. Rules | Minimum engineers per shift for each day type; generator settings |
+| 7. Rules | Minimum engineers per shift for each day type, shift timings (for calendar invites), carry-over from last month, generator settings |
 
 Every date field has a calendar button that opens a month view, with
 weekends and holidays highlighted. You can also type dates as `YYYY-MM-DD`,
@@ -92,39 +94,81 @@ everything as a JSON file you can reopen and reuse next month.
 The tool also honours leave, long leave and Must/Avoid shift requests. It
 balances nights, mornings, evenings and on-call duty across the team.
 
+## A month with Roster Creator
+
+1. **Import last month (Rules → Carry-over, or File → Import previous month's roster).**
+   Choose last month's saved roster file. This does two things:
+   - Nights worked at the end of last month get their comp off at the start of this month.
+   - Running totals of nights, shifts and on-call are carried over, so the rotation stays fair across months.
+2. **Generate.** Before building the roster, the app checks whether there are
+   enough people on each day. If there aren't, it lists the problem days (for
+   example, "Only 3 engineers available but at least 4 needed") so you can
+   adjust leave or the minimums first.
+3. **Adjust.** Click any cell to:
+   - change it (hand edits are locked automatically),
+   - lock or unlock it,
+   - swap it with another engineer.
+
+   Locked cells (padlock icon) stay exactly as they are when you press
+   **Generate** again, and everything else is rebuilt around them.
+4. **Swap shifts** (toolbar or right side of the cell menu). Pick two engineers and a day.
+   - The dialog shows exactly what changes and warns you if the swap would break a rule.
+   - When a night shift changes hands, its comp off moves with it.
+   - Swapped cells are locked.
+5. **Mark as published** when you share the roster. From then on:
+   - Every change is outlined in orange and listed under **Changes since published**.
+   - **Copy list** copies the changes so you can paste them into an email or chat.
+   - Pressing **Generate** again keeps the published roster wherever the rules allow, so only the necessary cells change.
+6. **Share** the roster:
+   - **Calendar (.ics)** writes one calendar file per engineer plus a team calendar. Each file covers shifts (with times), on-call, comp offs and leave, and opens in Outlook, Google Calendar or Apple Calendar.
+   - Excel and CSV exports are still available.
+7. **Save roster** (Ctrl+S). The roster file keeps everything: the inputs,
+   your hand edits, locks and the published version. Reopen it any time with
+   **File → Open** (Ctrl+O). Next month, import it for carry-over.
+
 ## Roster tab
 
-- Summary tiles show whether all rules are met, the number of violations and
-  warnings, and how evenly nights and primary on-call are spread.
+- Summary tiles show:
+  - whether all rules are met,
+  - how many rules are broken and how many requests couldn't be met,
+  - how evenly nights are spread, including previous months,
+  - how many shift preferences were met,
+  - how many cells changed since publishing.
 - Cells are colour-coded: `M` Morning, `E` Evening, `N` Night, `CO` Comp off,
-  `L` Leave, `LL` Long leave, `WO` Weekend off, `H` Holiday. A small indigo dot
-  marks primary on-call and a teal dot marks secondary on-call. Weekend, holiday
-  and freeze columns are shaded.
-- Hover over a cell to see details in the status bar. Click a cell to change
-  it by hand. The roster is re-checked straight away, and any day that breaks
-  a rule gets a red dot under its date.
-- The issues panel lists **Errors** (a mandatory rule is broken), **Warnings**
-  (a request could not be honoured) and **Info** notes.
-- **Export Excel** creates a colour-coded sheet with a legend and an Issues
-  sheet. **Export CSV** creates a plain table.
+  `L` Leave, `LL` Long leave, `WO` Weekend off, `H` Holiday.
+  - A small indigo dot marks primary on-call and a teal dot marks secondary on-call.
+  - A padlock marks a locked cell, and an orange outline marks a cell changed since publishing.
+  - Weekend, holiday and freeze columns are shaded.
+- Hover over a cell to see details in the status bar. Days that break a rule
+  get a red dot under the date.
+- The **Checks** tab lists:
+  - **Errors:** a mandatory rule is broken.
+  - **Warnings:** a request couldn't be honoured.
+  - **Info:** notes, such as the number of shift preferences met.
 
 ## How generation works
 
 The generator fills the month day by day in priority order:
 
-1. leave and comp offs
-2. Must requests
-3. primary on-call
-4. secondary on-call
-5. Night
-6. Morning
-7. Evening
-8. everyone else, split between Morning and Evening
+1. locked cells
+2. leave and comp offs (including comp offs carried over from last month)
+3. Must requests
+4. primary on-call
+5. secondary on-call
+6. Night
+7. Morning
+8. Evening
+9. everyone else, split between Morning and Evening (using their preferred shift if they have one)
 
 When several engineers qualify, it picks the one with the fewest of that duty
-so far. It does this for several hundred randomised attempts and keeps the one
-with the fewest rule violations and the most even workload. Set a random seed
-on the Rules tab to get the same roster every time.
+so far, counting totals carried over from previous months. Preferred shifts
+tip the balance, and after publishing, keeping the published assignment comes
+first.
+
+It does this for several hundred randomised attempts and keeps the best one:
+fewest rule violations first, then fewest unmet requests, fewest changes
+from the published roster, the most even workload and the most preferences
+met. Set a random seed on the Rules tab to get the same roster every time.
 
 ## Development
 
@@ -139,6 +183,9 @@ python -m pytest
 | `roster_tool/scheduler.py` | Roster generation |
 | `roster_tool/validator.py` | Rule checks (used for generated and hand-edited rosters) |
 | `roster_tool/export.py` | CSV / Excel export |
+| `roster_tool/storage.py` | Roster files, carry-over, change tracking, swaps |
+| `roster_tool/ics.py` | Calendar invite (.ics) export |
+| `roster_tool/datepicker.py` | Calendar date picker |
 | `roster_tool/gui.py` | Tkinter user interface |
 | `roster_tool/theme.py` | Colours, fonts and widget styles |
 | `build.py` | Builds the standalone desktop app with PyInstaller |

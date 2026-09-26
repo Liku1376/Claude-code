@@ -8,10 +8,10 @@ import os
 import statistics
 import sys
 import tkinter as tk
-from datetime import date
+from datetime import date, datetime
 from tkinter import filedialog, messagebox, ttk
 
-from . import export
+from . import export, ics, storage
 from . import theme as T
 from .datepicker import DateEntry
 from .model import (
@@ -23,11 +23,13 @@ from .model import (
     WEEKDAY_NAMES,
     Roster,
     RosterConfig,
+    Locks,
     empty_config_dict,
     parse_date,
+    parse_time,
 )
 from .scheduler import generate
-from .validator import ERROR, INFO, WARNING, count, validate
+from .validator import ERROR, INFO, WARNING, count, precheck, preference_stats, validate
 
 # Bundled files live next to the package when run from source, or in the
 # PyInstaller extraction folder (sys._MEIPASS) when run as a packaged app.
@@ -36,6 +38,8 @@ SAMPLE_CONFIG = os.path.join(BASE_DIR, "examples", "sample_config.json")
 ICON_PNG = os.path.join(BASE_DIR, "assets", "icon.png")
 DATE_HINT = "Use the calendar button or type a date (e.g. 2026-10-14 or 14)."
 LEGEND_NAMES = {"M": "Morning", "E": "Evening", "N": "Night", "CO": "Comp off", "L": "Leave", "LL": "Long leave", "WO": "Weekend", "H": "Holiday"}
+CHANGED_COLOR = "#F59E0B"
+ONCALL_LABELS = {"primary": "Primary on-call", "secondary": "Secondary on-call"}
 DESIGNATIONS = ("Engineer", "Senior Engineer", "Lead Engineer", "SME", "Manager")
 
 
@@ -268,6 +272,7 @@ class RosterGrid(ttk.Frame):
         self.on_hover = on_hover
         self.roster: Roster | None = None
         self.error_days: set[date] = set()
+        self.changes: dict = {}
         self.canvas = tk.Canvas(self, background=T.SURFACE, highlightthickness=0)
         xs = ttk.Scrollbar(self, orient="horizontal", command=self.canvas.xview)
         ys = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
@@ -290,10 +295,21 @@ class RosterGrid(ttk.Frame):
             text="Fill in the team and requests using the steps on the left,\nthen press  “Generate roster”.",
         )
 
-    def show(self, roster: Roster, error_days: set[date]):
+    def show(self, roster: Roster, error_days: set[date], changes: dict | None = None):
         self.roster = roster
         self.error_days = error_days
+        # (engineer name or on-call row label, day) -> previous value
+        self.changes = changes or {}
         self.draw()
+
+    def _lock_icon(self, x, y):
+        """Tiny padlock at (x, y) = top-left corner."""
+        c = self.canvas
+        c.create_arc(x + 1.5, y, x + 7.5, y + 7, start=0, extent=180, style="arc", outline=T.TEXT, width=1.5)
+        c.create_rectangle(x, y + 3.5, x + 9, y + 10, fill=T.TEXT, outline="")
+
+    def _changed_mark(self, x, y):
+        self.canvas.create_rectangle(x + 1, y + 1, x + self.CELL_W - 1, y + self.CELL_H - 1, outline=CHANGED_COLOR, width=2)
 
     def _rows(self):
         cfg = self.roster.config
@@ -390,6 +406,10 @@ class RosterGrid(ttk.Frame):
                     fg = "#" + export.CODE_TEXT_COLORS.get(code, "111827")
                     self._pill(x + g, y + g, x + self.CELL_W - g, y + self.CELL_H - g, fill, r=5)
                     c.create_text(x + self.CELL_W / 2, cy, text=code, fill=fg, font=f(9, "bold"))
+                    if (name, d) in self.changes:
+                        self._changed_mark(x, y)
+                    if (name, d) in r.locks.cells:
+                        self._lock_icon(x + 4, y + 4)
                     # Small dots mark on-call duty (primary = indigo, secondary = teal).
                     if r.primary.get(d) == name:
                         c.create_oval(x + self.CELL_W - 10, y + 5, x + self.CELL_W - 5, y + 10, fill=T.PRIMARY, outline="white")
@@ -402,6 +422,10 @@ class RosterGrid(ttk.Frame):
                         c.create_text(x + self.CELL_W / 2, cy, text=who[:5], fill=T.PRIMARY_DARK if kind == "primary" else "#115E59", font=f(8, "bold"))
                     else:
                         c.create_text(x + self.CELL_W / 2, cy, text="·", fill="#D1D5DB", font=f(10))
+                    if (ONCALL_LABELS[kind], d) in self.changes:
+                        self._changed_mark(x, y)
+                    if d in (r.locks.primary if kind == "primary" else r.locks.secondary):
+                        self._lock_icon(x + 4, y + 4)
             if kind == "eng":
                 counts = r.counts(name)
                 for j, key in enumerate(self.SUMMARY):
@@ -432,8 +456,14 @@ class RosterGrid(ttk.Frame):
         head = f"{d:%A %d %b} · {cfg.day_type(d)}{' (' + cfg.holiday_name(d) + ')' if cfg.holiday_name(d) else ''}"
         if kind == "eng":
             desc = f"{name}: {CODE_DESCRIPTIONS.get(r.code(name, d), r.code(name, d))}"
+            key, locked = (name, d), (name, d) in r.locks.cells
         else:
             desc = f"{'Primary' if kind == 'primary' else 'Secondary'} on-call: {(r.primary if kind == 'primary' else r.secondary).get(d, '') or '(none)'}"
+            key, locked = (ONCALL_LABELS[kind], d), d in (r.locks.primary if kind == "primary" else r.locks.secondary)
+        if locked:
+            desc += "  (locked)"
+        if key in self.changes:
+            desc += f"  (was {self.changes[key] or 'empty'} when published)"
         m = ", ".join(r.on_shift(d, "M")) or "-"
         n = ", ".join(r.on_shift(d, "N")) or "-"
         self.on_hover(f"{head}   |   {desc}   |   Morning: {m}   |   Night: {n}")
@@ -446,27 +476,139 @@ class RosterGrid(ttk.Frame):
         kind, name = self._rows()[ri]
         d = self.roster.days[col]
         cfg = self.roster.config
-        menu = tk.Menu(self, tearoff=0, font=T.Fonts.get(10), bg=T.SURFACE, activebackground=T.PRIMARY_LIGHT, activeforeground=T.PRIMARY_DARK, bd=0)
+        r = self.roster
+        opts = dict(tearoff=0, font=T.Fonts.get(10), bg=T.SURFACE, activebackground=T.PRIMARY_LIGHT, activeforeground=T.PRIMARY_DARK, bd=0)
+        menu = tk.Menu(self, **opts)
+        target = ("eng", name) if kind == "eng" else (kind, None)
         if kind == "eng":
+            menu.add_command(label=f"{name} · {d:%a %d %b}", state="disabled")
             for code in ALL_CODES:
-                menu.add_command(label=f"{code:<3}  {CODE_DESCRIPTIONS[code]}", command=lambda code=code: self.on_edit("code", name, d, code))
+                menu.add_command(label=f"{code:<3}  {CODE_DESCRIPTIONS[code]}", command=lambda code=code: self.on_edit("set", target, d, code))
+            menu.add_separator()
+            swap_menu = tk.Menu(menu, **opts)
+            for other in cfg.engineer_names:
+                if other != name:
+                    swap_menu.add_command(label=f"{other}  ({r.code(other, d)})", command=lambda o=other: self.on_edit("swap", target, d, o))
+            menu.add_cascade(label="Swap with…", menu=swap_menu)
+            locked = (name, d) in r.locks.cells
         else:
             want_sme = kind == "secondary"
-            menu.add_command(label="(none)", command=lambda: self.on_edit(kind, None, d, ""))
+            menu.add_command(label=f"{ONCALL_LABELS[kind]} · {d:%a %d %b}", state="disabled")
+            menu.add_command(label="(none)", command=lambda: self.on_edit("set", target, d, ""))
             for e in cfg.engineers:
                 if e.is_sme == want_sme:
-                    menu.add_command(label=e.name, command=lambda n=e.name: self.on_edit(kind, None, d, n))
+                    menu.add_command(label=e.name, command=lambda n=e.name: self.on_edit("set", target, d, n))
+            menu.add_separator()
+            locked = d in (r.locks.primary if kind == "primary" else r.locks.secondary)
+        if locked:
+            menu.add_command(label="Unlock (let Generate change it)", command=lambda: self.on_edit("unlock", target, d, None))
+        else:
+            menu.add_command(label="Lock (keep it when regenerating)", command=lambda: self.on_edit("lock", target, d, None))
         menu.tk_popup(event.x_root, event.y_root)
+
+
+class SwapDialog(tk.Toplevel):
+    """Swap two engineers' duties on one day, previewing any rule problems
+    the swap would cause before it is applied."""
+
+    def __init__(self, app, a="", b="", day=None):
+        super().__init__(app)
+        self.app = app
+        self.title("Swap shifts")
+        self.configure(bg=T.SURFACE, padx=20, pady=18)
+        self.transient(app)
+        self.resizable(False, False)
+        names = app.roster.config.engineer_names
+        f = T.Fonts.get
+        tk.Label(self, text="Swap shifts", bg=T.SURFACE, fg=T.TEXT, font=f(14, "bold")).grid(row=0, column=0, columnspan=3, sticky="w")
+        tk.Label(
+            self, text="The two engineers exchange their shift and on-call duty for the day.\nSwapped cells are locked so regenerating keeps them.",
+            bg=T.SURFACE, fg=T.MUTED, font=f(9), justify="left",
+        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(2, 12))
+        self.a, self.b, self.day = tk.StringVar(value=a), tk.StringVar(value=b), tk.StringVar(value=day.isoformat() if day else "")
+        for col, (label, var) in enumerate((("Engineer", self.a), ("Swaps with", self.b))):
+            tk.Label(self, text=label, bg=T.SURFACE, fg=T.MUTED, font=f(9, "bold")).grid(row=2, column=col, sticky="w", padx=(0, 12))
+            ttk.Combobox(self, textvariable=var, values=names, state="readonly", width=18).grid(row=3, column=col, sticky="w", padx=(0, 12))
+        tk.Label(self, text="Date", bg=T.SURFACE, fg=T.MUTED, font=f(9, "bold")).grid(row=2, column=2, sticky="w")
+        DateEntry(self, self.day, default_date=app.roster_month_start, is_weekend=app.is_weekend, holiday_name=app.holiday_name, width=12).grid(row=3, column=2, sticky="w")
+
+        self.preview = tk.Label(self, text="", bg=T.STRIPE, fg=T.TEXT, font=f(10), justify="left", anchor="w", padx=12, pady=10, width=62)
+        self.preview.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(16, 8))
+        self.check = tk.Label(self, text="", bg=T.SURFACE, fg=T.MUTED, font=f(9), justify="left", anchor="w", wraplength=520)
+        self.check.grid(row=5, column=0, columnspan=3, sticky="ew")
+
+        btns = tk.Frame(self, bg=T.SURFACE)
+        btns.grid(row=6, column=0, columnspan=3, sticky="e", pady=(16, 0))
+        ttk.Button(btns, text="Cancel", command=self.destroy).pack(side="right")
+        self.ok = ttk.Button(btns, text="Swap", style="Accent.TButton", command=self.apply)
+        self.ok.pack(side="right", padx=(0, 8))
+        for v in (self.a, self.b, self.day):
+            v.trace_add("write", lambda *_: self.refresh())
+        self.bind("<Escape>", lambda _e: self.destroy())
+        self.result = None
+        self.refresh()
+        self.update_idletasks()
+        x = app.winfo_rootx() + (app.winfo_width() - self.winfo_reqwidth()) // 2
+        y = app.winfo_rooty() + (app.winfo_height() - self.winfo_reqheight()) // 3
+        self.geometry(f"+{max(0, x)}+{max(0, y)}")
+        self.grab_set()
+
+    def _parse(self):
+        roster = self.app.roster
+        a, b = self.a.get(), self.b.get()
+        try:
+            d = parse_date(self.day.get(), roster.config.year, roster.config.month)
+        except ValueError:
+            return None
+        if not a or not b or a == b or d not in set(roster.days):
+            return None
+        return a, b, d
+
+    def refresh(self):
+        parsed = self._parse()
+        self.result = None
+        if not parsed:
+            self.preview.configure(text="Pick two different engineers and a day in the roster month.")
+            self.check.configure(text="", fg=T.MUTED)
+            self.ok.state(["disabled"])
+            return
+        a, b, d = parsed
+        roster = self.app.roster
+        new = storage.swap(roster, a, b, d)
+        lines, last_day = [], None
+        for c in storage.diff(roster, new):
+            if c.day != last_day:
+                lines.append(f"{c.day:%A %d %B}" + ("   (comp off moves with the night)" if last_day else ""))
+                last_day = c.day
+            lines.append(f"   {c.who}:  {c.old or '-'}  →  {c.new or '-'}")
+        self.preview.configure(text="\n".join(lines) or "Nothing changes - both have the same duty that day.")
+        before = {i.message for i in validate(roster) if i.severity == ERROR}
+        added = [i for i in validate(new) if i.severity == ERROR and i.message not in before]
+        if added:
+            text = "This swap would break these rules:\n" + "\n".join(f"  • {i.day:%d %b}: {i.message}" if i.day else f"  • {i.message}" for i in added[:6])
+            self.check.configure(text=text, fg=T.DANGER)
+            self.ok.configure(text="Swap anyway")
+        else:
+            self.check.configure(text="✓ No new rule problems.", fg=T.SUCCESS)
+            self.ok.configure(text="Swap")
+        self.ok.state(["!disabled"])
+        self.result = new
+
+    def apply(self):
+        if self.result is not None:
+            a, b, d = self._parse()
+            self.app.apply_roster(self.result, f"Swapped {a} and {b} on {d:%d %b}")
+        self.destroy()
 
 
 class StatTile(tk.Frame):
     """A small summary tile: caption above a big value."""
 
     def __init__(self, master, caption):
-        super().__init__(master, bg=T.SURFACE, highlightbackground=T.BORDER, highlightthickness=1, padx=16, pady=10)
+        super().__init__(master, bg=T.SURFACE, highlightbackground=T.BORDER, highlightthickness=1, padx=14, pady=7)
         self.caption = tk.Label(self, text=caption.upper(), bg=T.SURFACE, fg=T.MUTED, font=T.Fonts.get(8, "bold"))
         self.caption.pack(anchor="w")
-        self.value = tk.Label(self, text="—", bg=T.SURFACE, fg=T.TEXT, font=T.Fonts.get(16, "bold"))
+        self.value = tk.Label(self, text="—", bg=T.SURFACE, fg=T.TEXT, font=T.Fonts.get(15, "bold"))
         self.value.pack(anchor="w")
         self.sub = tk.Label(self, text="", bg=T.SURFACE, fg=T.MUTED, font=T.Fonts.get(8))
         self.sub.pack(anchor="w")
@@ -536,7 +678,8 @@ class RosterApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Roster Creator")
-        self.geometry("1360x840")
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        self.geometry(f"{max(1000, min(1440, sw - 60))}x{max(640, min(960, sh - 90))}")
         self.minsize(1000, 640)
         T.apply_theme(self)
         try:
@@ -547,7 +690,11 @@ class RosterApp(tk.Tk):
         self.last_dir = os.path.expanduser("~")
         self.roster: Roster | None = None
         self.issues = []
-        self.config_path: str | None = None
+        self.config_path: str | None = None  # inputs-only file
+        self.roster_path: str | None = None  # full roster file
+        self.published: Roster | None = None  # last published version, for change tracking
+        self.published_at = ""
+        self.carry_over: dict = {}
 
         RecordEditor.date_context = self
         self._build_menu()
@@ -577,17 +724,30 @@ class RosterApp(tk.Tk):
         menubar = tk.Menu(self)
         fm = tk.Menu(menubar, tearoff=0)
         fm.add_command(label="New", command=self.new_config)
-        fm.add_command(label="Open inputs…", command=self.open_config)
-        fm.add_command(label="Save inputs", command=self.save_config)
-        fm.add_command(label="Save inputs as…", command=lambda: self.save_config(ask=True))
+        fm.add_command(label="Open roster or inputs…", accelerator="Ctrl+O", command=self.open_file)
+        fm.add_command(label="Save roster", accelerator="Ctrl+S", command=self.save_roster)
+        fm.add_command(label="Save roster as…", command=lambda: self.save_roster(ask=True))
+        fm.add_command(label="Save inputs only…", command=lambda: self.save_config(ask=True))
         fm.add_command(label="Load sample data", command=self.load_sample)
+        fm.add_separator()
+        fm.add_command(label="Import previous month's roster…", command=self.import_previous)
         fm.add_separator()
         fm.add_command(label="Export roster to Excel…", command=self.export_excel)
         fm.add_command(label="Export roster to CSV…", command=self.export_csv)
+        fm.add_command(label="Export calendar invites (.ics)…", command=self.export_ics)
         fm.add_separator()
         fm.add_command(label="Exit", command=self.destroy)
         menubar.add_cascade(label="File", menu=fm)
+        rm = tk.Menu(menubar, tearoff=0)
+        rm.add_command(label="Generate roster", accelerator="Ctrl+G", command=self.generate)
+        rm.add_command(label="Swap shifts…", command=self.open_swap)
+        rm.add_command(label="Mark as published", command=self.mark_published)
+        rm.add_command(label="Clear all locks", command=self.clear_locks)
+        menubar.add_cascade(label="Roster", menu=rm)
         self.config(menu=menubar)
+        self.bind_all("<Control-s>", lambda _e: self.save_roster())
+        self.bind_all("<Control-o>", lambda _e: self.open_file())
+        self.bind_all("<Control-g>", lambda _e: self.generate())
 
     def _build_header(self):
         bar = tk.Frame(self, bg=T.HEADER_BG, height=64)
@@ -719,7 +879,7 @@ class RosterApp(tk.Tk):
         self.long_leaves.pack(fill="both", expand=True)
 
     def _build_requirements_tab(self):
-        tab = self._add_page("Shift Requirements", "Pin an engineer to a shift, or keep them off one (e.g. no nights).", "Shift Requirements")
+        tab = self._add_page("Shift Requirements", "Pin an engineer to a shift, give them a preferred shift, or keep them off one (e.g. no nights).", "Shift Requirements")
         self.requirements = RecordEditor(
             tab,
             "Add a shift requirement",
@@ -728,10 +888,10 @@ class RosterApp(tk.Tk):
                 ("shift", "Shift", "choice", [SHIFT_NAMES[s] for s in SHIFTS]),
                 ("start", "Start date", "date", None),
                 ("end", "End date (optional)", "date", None),
-                ("mode", "Type", "choice", ["Must", "Avoid"]),
+                ("mode", "Type", "choice", ["Must", "Prefer", "Avoid"]),
                 ("note", "Note", "entry", None),
             ],
-            hint="Must = works this shift on those working days.   Avoid = never rostered on this shift.",
+            hint="Must = always this shift.   Prefer = this shift when the rules allow.   Avoid = never this shift.",
             noun="requirement", on_change=self._inputs_changed,
         )
         self.requirements.pack(fill="both", expand=True)
@@ -780,6 +940,30 @@ class RosterApp(tk.Tk):
         ttk.Entry(adv, textvariable=self.seed_var, width=10).grid(row=3, column=0, sticky="w", pady=(3, 0))
         ttk.Label(adv, text="Set a seed to get the same roster every time.", style="Hint.TLabel").grid(row=4, column=0, sticky="w", pady=(4, 0))
 
+        cols2 = ttk.Frame(tab)
+        cols2.pack(fill="x", pady=(14, 0))
+        outer, times = card(cols2, "Shift timings", "Used for the calendar invites (.ics). A night ending earlier than it starts ends next morning.")
+        outer.pack(side="left", fill="both", expand=True, padx=(0, 7))
+        ttk.Label(times, text="SHIFT", **hdr).grid(row=0, column=0, sticky="w")
+        ttk.Label(times, text="START", **hdr).grid(row=0, column=1, sticky="w", padx=10)
+        ttk.Label(times, text="END", **hdr).grid(row=0, column=2, sticky="w", padx=10)
+        self.time_vars: dict[str, tuple[tk.StringVar, tk.StringVar]] = {}
+        for i, sh in enumerate(SHIFTS, 1):
+            ttk.Label(times, text=SHIFT_NAMES[sh], style="Card.TLabel").grid(row=i, column=0, sticky="w", pady=3)
+            a, b = tk.StringVar(), tk.StringVar()
+            ttk.Entry(times, textvariable=a, width=7).grid(row=i, column=1, sticky="w", padx=10)
+            ttk.Entry(times, textvariable=b, width=7).grid(row=i, column=2, sticky="w", padx=10)
+            self.time_vars[sh] = (a, b)
+
+        outer, carry = card(cols2, "Carry-over from previous month", "Keeps comp offs and fairness going from one month to the next.")
+        outer.pack(side="left", fill="both", expand=True, padx=(7, 0))
+        self.carry_var = tk.StringVar()
+        ttk.Label(carry, textvariable=self.carry_var, style="Card.TLabel", justify="left", wraplength=460).pack(anchor="w")
+        cbtn = ttk.Frame(carry, style="Surface.TFrame")
+        cbtn.pack(anchor="w", pady=(10, 0))
+        ttk.Button(cbtn, text="Import previous month's roster…", style="Accent.TButton", command=self.import_previous).pack(side="left")
+        ttk.Button(cbtn, text="Clear", command=self.clear_carry_over).pack(side="left", padx=(8, 0))
+
         outer, rules = card(tab, "Mandatory rules applied")
         outer.pack(fill="x", pady=(14, 0))
         items = (
@@ -795,21 +979,29 @@ class RosterApp(tk.Tk):
             ttk.Label(rules, text=text, style="Card.TLabel", foreground=T.MUTED).grid(row=i, column=2, sticky="w")
 
     def _build_roster_tab(self):
-        tab = self._add_page("Roster", "Hover a cell for details. Click a cell to change it - the roster is re-checked instantly.", "Roster")
+        tab = self._add_page(
+            "Roster",
+            "Click a cell to change, lock or swap it. Locked cells stay put when you regenerate.",
+            "Roster",
+        )
         bar = ttk.Frame(tab)
-        bar.pack(fill="x", pady=(0, 12))
+        bar.pack(fill="x", pady=(0, 10))
         ttk.Button(bar, text="Generate roster  ▶", style="Big.Accent.TButton", command=self.generate).pack(side="left")
-        ttk.Button(bar, text="Re-validate", command=self.revalidate).pack(side="left", padx=(8, 0))
-        ttk.Button(bar, text="Export CSV", command=self.export_csv).pack(side="right")
-        ttk.Button(bar, text="Export Excel", command=self.export_excel).pack(side="right", padx=(0, 8))
+        ttk.Button(bar, text="⇄  Swap shifts…", command=self.open_swap).pack(side="left", padx=(8, 0))
+        ttk.Button(bar, text="✓  Mark as published", command=self.mark_published).pack(side="left", padx=(8, 0))
+        ttk.Button(bar, text="Clear locks", command=self.clear_locks).pack(side="left", padx=(8, 0))
+        ttk.Button(bar, text="Calendar (.ics)", command=self.export_ics).pack(side="right")
+        ttk.Button(bar, text="CSV", command=self.export_csv).pack(side="right", padx=(0, 8))
+        ttk.Button(bar, text="Excel", command=self.export_excel).pack(side="right", padx=(0, 8))
+        ttk.Button(bar, text="Save roster", command=self.save_roster).pack(side="right", padx=(0, 8))
 
         tiles = ttk.Frame(tab)
-        tiles.pack(fill="x", pady=(0, 12))
+        tiles.pack(fill="x", pady=(0, 10))
         self.tiles = {}
-        for i, key in enumerate(("Status", "Rule violations", "Warnings", "Nights per person", "Primary on-call per person")):
+        for i, key in enumerate(("Status", "Rule violations", "Warnings", "Nights / person", "Preferences met", "Changes")):
             t = StatTile(tiles, key)
             t.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 10, 0))
-            tiles.columnconfigure(i, weight=1)
+            tiles.columnconfigure(i, weight=1, uniform="tiles")
             self.tiles[key] = t
 
         legend = tk.Frame(tab, bg=T.BG)
@@ -818,13 +1010,25 @@ class RosterApp(tk.Tk):
             tk.Label(
                 legend, text=code, width=3, bg="#" + export.CODE_COLORS[code], fg="#" + export.CODE_TEXT_COLORS.get(code, "111827"),
                 font=T.Fonts.get(8, "bold"), pady=2,
-            ).pack(side="left", padx=(0, 5))
-            tk.Label(legend, text=LEGEND_NAMES[code], bg=T.BG, fg=T.MUTED, font=T.Fonts.get(9)).pack(side="left", padx=(0, 14))
-        for color, text in ((T.PRIMARY, "Primary"), ("#0D9488", "Secondary"), (T.DANGER, "Rule broken")):
-            dot = tk.Canvas(legend, width=10, height=10, bg=T.BG, highlightthickness=0)
+            ).pack(side="left", padx=(0, 4))
+            tk.Label(legend, text=LEGEND_NAMES[code], bg=T.BG, fg=T.MUTED, font=T.Fonts.get(9)).pack(side="left", padx=(0, 10))
+        legend.pack_configure(pady=(0, 4))
+        markers = tk.Frame(tab, bg=T.BG)
+        markers.pack(fill="x", pady=(0, 8))
+        for color, text in ((T.PRIMARY, "Primary on-call"), ("#0D9488", "Secondary on-call"), (T.DANGER, "Rule broken that day")):
+            dot = tk.Canvas(markers, width=10, height=10, bg=T.BG, highlightthickness=0)
             dot.create_oval(1, 1, 9, 9, fill=color, outline="")
-            dot.pack(side="left", padx=(0, 5))
-            tk.Label(legend, text=text, bg=T.BG, fg=T.MUTED, font=T.Fonts.get(9)).pack(side="left", padx=(0, 14))
+            dot.pack(side="left", padx=(0, 4))
+            tk.Label(markers, text=text, bg=T.BG, fg=T.MUTED, font=T.Fonts.get(9)).pack(side="left", padx=(0, 14))
+        mark = tk.Canvas(markers, width=14, height=12, bg=T.BG, highlightthickness=0)
+        mark.create_rectangle(1, 1, 13, 11, outline=CHANGED_COLOR, width=2)
+        mark.pack(side="left", padx=(0, 4))
+        tk.Label(markers, text="Changed since published", bg=T.BG, fg=T.MUTED, font=T.Fonts.get(9)).pack(side="left", padx=(0, 14))
+        lock = tk.Canvas(markers, width=12, height=12, bg=T.BG, highlightthickness=0)
+        lock.create_arc(2.5, 1, 8.5, 8, start=0, extent=180, style="arc", outline=T.TEXT, width=1.5)
+        lock.create_rectangle(1, 4.5, 10, 11, fill=T.TEXT, outline="")
+        lock.pack(side="left", padx=(0, 4))
+        tk.Label(markers, text="Locked - kept when regenerating", bg=T.BG, fg=T.MUTED, font=T.Fonts.get(9)).pack(side="left")
 
         pane = ttk.PanedWindow(tab, orient="vertical")
         pane.pack(fill="both", expand=True)
@@ -833,24 +1037,45 @@ class RosterApp(tk.Tk):
         self.grid_view.pack(fill="both", expand=True)
         pane.add(grid_card, weight=4)
 
-        issues_card = ttk.Frame(pane, style="Card.TFrame", padding=1)
-        ttk.Label(issues_card, text="Checks", style="CardTitle.TLabel", padding=(14, 10)).pack(anchor="w")
-        inner = ttk.Frame(issues_card, style="Surface.TFrame")
-        inner.pack(fill="both", expand=True)
-        self.issue_tree = ttk.Treeview(inner, columns=("sev", "date", "msg"), show="headings", height=4)
-        for col, label, w in (("sev", "SEVERITY", 110), ("date", "DATE", 120), ("msg", "MESSAGE", 900)):
-            self.issue_tree.heading(col, text=label, anchor="w")
-            self.issue_tree.column(col, width=w, anchor="w", stretch=col == "msg")
+        bottom = ttk.Notebook(pane)
+        pane.add(bottom, weight=1)
+        self.bottom_nb = bottom
+
+        issues_card = ttk.Frame(bottom, style="Surface.TFrame")
+        bottom.add(issues_card, text="  Checks  ")
+        self.issue_tree = self._table(
+            issues_card, (("sev", "SEVERITY", 110, False), ("date", "DATE", 120, False), ("msg", "MESSAGE", 900, True))
+        )
         self.issue_tree.tag_configure(ERROR, foreground=T.DANGER, background=T.DANGER_LIGHT)
         self.issue_tree.tag_configure(WARNING, foreground="#B45309", background=T.WARNING_LIGHT)
         self.issue_tree.tag_configure(INFO, foreground=T.MUTED)
         self.issue_tree.tag_configure("ok", foreground=T.SUCCESS, background=T.SUCCESS_LIGHT)
-        sb = ttk.Scrollbar(inner, orient="vertical", command=self.issue_tree.yview)
-        self.issue_tree.configure(yscrollcommand=sb.set)
-        self.issue_tree.pack(side="left", fill="both", expand=True)
-        sb.pack(side="right", fill="y")
-        pane.add(issues_card, weight=1)
+
+        changes_card = ttk.Frame(bottom, style="Surface.TFrame")
+        bottom.add(changes_card, text="  Changes since published  ")
+        head = ttk.Frame(changes_card, style="Surface.TFrame", padding=(10, 6))
+        head.pack(fill="x")
+        self.published_var = tk.StringVar(value="Not published yet.")
+        ttk.Label(head, textvariable=self.published_var, style="Hint.TLabel").pack(side="left")
+        ttk.Button(head, text="Copy list", command=self.copy_changes).pack(side="right")
+        self.change_tree = self._table(
+            changes_card, (("date", "DATE", 120, False), ("who", "WHO", 180, False), ("old", "BEFORE", 140, False), ("new", "AFTER", 140, False))
+        )
+        self.change_tree.tag_configure("chg", background=T.WARNING_LIGHT)
         self.roster_page = len(self.nb.tabs()) - 1
+
+    def _table(self, parent, columns):
+        inner = ttk.Frame(parent, style="Surface.TFrame")
+        inner.pack(fill="both", expand=True)
+        tree = ttk.Treeview(inner, columns=[c[0] for c in columns], show="headings", height=3)
+        for key, label, width, stretch in columns:
+            tree.heading(key, text=label, anchor="w")
+            tree.column(key, width=width, anchor="w", stretch=stretch)
+        sb = ttk.Scrollbar(inner, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=sb.set)
+        tree.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+        return tree
 
     # -- data in/out -----------------------------------------------------------
     def _inputs_changed(self):
@@ -886,6 +1111,8 @@ class RosterApp(tk.Tk):
             "min_coverage": {dt: {SHIFT_NAMES[s]: v.get() for s, v in d.items()} for dt, d in self.min_vars.items()},
             "attempts": self.attempts_var.get(),
             "seed": self.seed_var.get(),
+            "shift_times": {SHIFT_NAMES[sh]: {"start": a.get(), "end": b.get()} for sh, (a, b) in self.time_vars.items()},
+            "carry_over": self.carry_over,
         }
 
     def load_dict(self, data: dict):
@@ -902,34 +1129,70 @@ class RosterApp(tk.Tk):
         self.freeze.set_rows(base["freeze_periods"])
         for i, v in enumerate(self.weekend_vars):
             v.set(i in [int(x) for x in base["weekend_days"]])
-        defaults = empty_config_dict()["min_coverage"]
+        defaults = empty_config_dict()
         for dt, d in self.min_vars.items():
             for s, v in d.items():
-                v.set(str(base["min_coverage"].get(dt, {}).get(SHIFT_NAMES[s], defaults[dt][SHIFT_NAMES[s]])))
+                v.set(str(base["min_coverage"].get(dt, {}).get(SHIFT_NAMES[s], defaults["min_coverage"][dt][SHIFT_NAMES[s]])))
+        for sh, (a, b) in self.time_vars.items():
+            t = (base.get("shift_times") or {}).get(SHIFT_NAMES[sh]) or defaults["shift_times"][SHIFT_NAMES[sh]]
+            a.set(t.get("start", "")), b.set(t.get("end", ""))
         self.attempts_var.set(str(base["attempts"]))
         self.seed_var.set(str(base.get("seed") or ""))
+        self.carry_over = dict(base.get("carry_over") or {})
+        self._update_carry_label()
         self._inputs_changed()
 
+    def _reset_roster(self):
+        self.roster, self.issues = None, []
+        self.roster_path = None
+        self.published, self.published_at = None, ""
+        self.grid_view.roster = None
+        self.grid_view.canvas.delete("all")
+        self.grid_view._empty_state()
+        for tree in (self.issue_tree, self.change_tree):
+            tree.delete(*tree.get_children())
+        for t in self.tiles.values():
+            t.set("—")
+        self.published_var.set("Not published yet.")
+
     def new_config(self):
-        if messagebox.askyesno("New", "Clear all inputs?", parent=self):
+        if messagebox.askyesno("New", "Clear all inputs and the current roster?", parent=self):
             self.config_path = None
+            self._reset_roster()
             self.load_dict(empty_config_dict())
 
-    def open_config(self):
-        path = filedialog.askopenfilename(parent=self, initialdir=self.last_dir, filetypes=[("Roster inputs", "*.json"), ("All files", "*")])
+    def open_file(self):
+        path = filedialog.askopenfilename(
+            parent=self, initialdir=self.last_dir, filetypes=[("Roster or inputs", "*.json"), ("All files", "*")]
+        )
         if path:
             self._open_path(path)
 
     def _open_path(self, path):
         try:
             with open(path, encoding="utf-8") as fh:
-                self.load_dict(json.load(fh))
+                data = json.load(fh)
+            if storage.is_roster_file(data):
+                rf = storage.roster_file_from_dict(data)
+            else:
+                rf = None
         except (OSError, ValueError, KeyError) as exc:
             messagebox.showerror("Open failed", str(exc), parent=self)
             return
-        self.config_path = path
+        self._reset_roster()
+        if rf:
+            self.load_dict(rf.inputs)
+            self.roster = rf.roster
+            self.published, self.published_at = rf.published, rf.published_at
+            self.roster_path, self.config_path = path, None
+            self.issues = validate(self.roster)
+            self._show_roster()
+            self.show_page(self.roster_page)
+        else:
+            self.load_dict(data)
+            self.config_path = path
         self._remember_dir(path)
-        self.status.set(f"Loaded {path}")
+        self.status.set(f"Opened {path}")
 
     def load_sample(self):
         last_dir = self.last_dir
@@ -948,48 +1211,220 @@ class RosterApp(tk.Tk):
             json.dump(self.collect_dict(), fh, indent=2)
         self.config_path = path
         self._remember_dir(path)
-        self.status.set(f"Saved {path}")
+        self.status.set(f"Saved inputs to {path}")
+
+    def save_roster(self, ask=False):
+        if not self.roster:
+            # Nothing generated yet - saving the inputs is all we can do.
+            self.save_config(ask=True)
+            return
+        path = self.roster_path
+        if ask or not path:
+            path = filedialog.asksaveasfilename(
+                parent=self, initialdir=self.last_dir, defaultextension=".json",
+                initialfile=self._default_name("json"), filetypes=[("Roster file", "*.json")],
+            )
+            if not path:
+                return
+        try:
+            storage.save_roster_file(path, self.collect_dict(), self.roster, self.published, self.published_at)
+        except OSError as exc:
+            messagebox.showerror("Save failed", str(exc), parent=self)
+            return
+        self.roster_path = path
+        self._remember_dir(path)
+        self.status.set(f"Saved roster to {path}")
+
+    # -- carry-over ------------------------------------------------------------
+    def _update_carry_label(self):
+        co = self.carry_over
+        if not co:
+            self.carry_var.set(
+                "Nothing imported. Import last month's saved roster so nights worked at the end of last month "
+                "get their comp off here, and nights / on-call stay fair across months."
+            )
+            return
+        nights = ", ".join(f"{n['engineer']} ({date.fromisoformat(n['date']):%d %b})" for n in co.get("nights", [])) or "none"
+        self.carry_var.set(f"Imported from {co.get('source', 'previous month')}.\nPending comp offs for nights: {nights}.\nRunning totals for fairness are included.")
+
+    def clear_carry_over(self):
+        self.carry_over = {}
+        self._update_carry_label()
+
+    def import_previous(self):
+        path = filedialog.askopenfilename(parent=self, initialdir=self.last_dir, title="Previous month's roster", filetypes=[("Roster file", "*.json")])
+        if not path:
+            return
+        try:
+            prev = storage.load_roster_file(path)
+        except (OSError, ValueError, KeyError) as exc:
+            messagebox.showerror("Import failed", f"{exc}\n\nPick a roster saved with 'Save roster'.", parent=self)
+            return
+        pcfg = prev.roster.config
+        ny, nm = storage.next_month(pcfg.year, pcfg.month)
+        cur = self.roster_month_start()
+        if (cur.year, cur.month) != (ny, nm):
+            if messagebox.askyesno(
+                "Roster month",
+                f"That roster is for {calendar.month_name[pcfg.month]} {pcfg.year}.\n"
+                f"Set this roster's month to {calendar.month_name[nm]} {ny}?",
+                parent=self,
+            ):
+                self.year_var.set(str(ny))
+                self.month_var.set(calendar.month_name[nm])
+        if not self.team.rows and messagebox.askyesno(
+            "Copy team", "Your team list is empty. Copy the team, weekend days, rules and shift timings from that roster?", parent=self
+        ):
+            src = prev.inputs
+            self.team.set_rows(src.get("engineers", []))
+            keep = self.collect_dict()
+            for key in ("weekend_days", "min_coverage", "shift_times", "attempts"):
+                if key in src:
+                    keep[key] = src[key]
+            self.load_dict(keep)
+        self.carry_over = storage.carry_over_from(prev.roster)
+        self._update_carry_label()
+        self._remember_dir(path)
+        self.show_page(6)
+        self.status.set(f"Imported carry-over from {self.carry_over['source']}")
 
     # -- roster ----------------------------------------------------------------
+    def _current_locks(self, cfg: RosterConfig) -> Locks:
+        r = self.roster
+        if r and (r.config.year, r.config.month) == (cfg.year, cfg.month):
+            return r.locks
+        return Locks()
+
     def generate(self):
         try:
             cfg = RosterConfig.from_dict(self.collect_dict())
         except ValueError as exc:
             messagebox.showerror("Please fix the inputs", str(exc), parent=self)
             return
+        if not cfg.engineers:
+            messagebox.showinfo("No team", "Add at least one engineer on the Team page first.", parent=self)
+            return
+        locks = self._current_locks(cfg)
+        problems = precheck(cfg, locks)
+        if problems:
+            lines = "\n".join(f"• {i.day:%a %d %b}: {i.message}" for i in problems[:8])
+            more = f"\n…and {len(problems) - 8} more" if len(problems) > 8 else ""
+            if not messagebox.askyesno(
+                "Not enough people on some days",
+                f"The team can't meet the rules on these days:\n\n{lines}{more}\n\n"
+                "Adjust leave or the minimums on the Rules page, or generate anyway and fix by hand.\n\nGenerate anyway?",
+                icon="warning", parent=self,
+            ):
+                return
         self.status.set("Generating…")
         self.config(cursor="watch")
         self.update_idletasks()
         try:
-            self.roster, self.issues = generate(cfg)
+            baseline = self.published if self.published and (self.published.config.year, self.published.config.month) == (cfg.year, cfg.month) else None
+            roster, issues = generate(cfg, locks, baseline)
         except ValueError as exc:
             messagebox.showerror("Cannot generate", str(exc), parent=self)
             return
         finally:
             self.config(cursor="")
+        if self.published and (self.published.config.year, self.published.config.month) != (cfg.year, cfg.month):
+            self.published, self.published_at = None, ""
+        self.roster, self.issues = roster, issues
         self._show_roster()
         self.show_page(self.roster_page)
+        n = len(locks.cells) + len(locks.primary) + len(locks.secondary)
+        notes = []
+        if n:
+            notes.append(f"kept {n} locked cell(s)")
+        if baseline:
+            notes.append(f"{len(self._changes())} change(s) from the published roster")
+        if notes:
+            self.status.set("Roster regenerated - " + ", ".join(notes))
+
+    def apply_roster(self, roster: Roster, message: str = ""):
+        self.roster = roster
+        self.revalidate()
+        if message:
+            self.status.set(message)
 
     def revalidate(self):
         if self.roster:
             self.issues = validate(self.roster)
             self._show_roster()
 
-    def _on_grid_edit(self, kind, name, d, value):
-        if kind == "code":
-            self.roster.grid[name][d] = value
+    def _on_grid_edit(self, action, target, d, value):
+        r = self.roster
+        kind, name = target
+        if action == "swap":
+            self.open_swap(name, value, d)
+            return
+        if kind == "eng":
+            if action == "set":
+                r.grid[name][d] = value
+                r.locks.cells[(name, d)] = value  # hand edits are kept on regenerate
+            elif action == "lock":
+                r.locks.cells[(name, d)] = r.code(name, d)
+            elif action == "unlock":
+                r.locks.cells.pop((name, d), None)
         else:
-            target = self.roster.primary if kind == "primary" else self.roster.secondary
-            if value:
-                target[d] = value
-            else:
-                target.pop(d, None)
+            table = r.primary if kind == "primary" else r.secondary
+            locks = r.locks.primary if kind == "primary" else r.locks.secondary
+            if action == "set":
+                if value:
+                    table[d] = value
+                else:
+                    table.pop(d, None)
+                locks[d] = value
+            elif action == "lock":
+                locks[d] = table.get(d, "")
+            elif action == "unlock":
+                locks.pop(d, None)
         self.revalidate()
+
+    def open_swap(self, a="", b="", d=None):
+        if self._require_roster():
+            SwapDialog(self, a, b, d)
+
+    def clear_locks(self):
+        if not self._require_roster():
+            return
+        n = len(self.roster.locks.cells) + len(self.roster.locks.primary) + len(self.roster.locks.secondary)
+        if n and messagebox.askyesno("Clear locks", f"Unlock all {n} locked cell(s)? The roster itself is not changed.", parent=self):
+            self.roster.locks = Locks()
+            self._show_roster()
+
+    def mark_published(self):
+        if not self._require_roster():
+            return
+        self.published = self.roster.copy()
+        self.published_at = datetime.now().strftime("%d %b %Y %H:%M")
+        self._show_roster()
+        self.status.set("Marked as published - later changes will be highlighted")
+
+    def _changes(self):
+        if not (self.roster and self.published):
+            return []
+        return storage.diff(self.published, self.roster)
+
+    def copy_changes(self):
+        changes = self._changes()
+        if not changes:
+            messagebox.showinfo("Changes", "No changes since the roster was published.", parent=self)
+            return
+        text = "Roster changes since " + (self.published_at or "publishing") + ":\n" + "\n".join(f"- {c}" for c in changes)
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        self.status.set(f"Copied {len(changes)} change(s) to the clipboard")
 
     def _show_roster(self):
         errors = count(self.issues, ERROR)
         warnings = count(self.issues, WARNING)
-        self.grid_view.show(self.roster, {i.day for i in self.issues if i.severity == ERROR and i.day})
+        changes = self._changes()
+        self.grid_view.show(
+            self.roster,
+            {i.day for i in self.issues if i.severity == ERROR and i.day},
+            {(c.who, c.day): c.old for c in changes},
+        )
         self.issue_tree.delete(*self.issue_tree.get_children())
         if errors == 0:
             self.issue_tree.insert("", "end", values=("✓ OK", "", "All mandatory rules are satisfied"), tags=("ok",))
@@ -997,19 +1432,39 @@ class RosterApp(tk.Tk):
         for i in self.issues:
             self.issue_tree.insert("", "end", values=(icons[i.severity], i.day.strftime("%a %d %b") if i.day else "", i.message), tags=(i.severity,))
 
-        if errors == 0:
-            self.tiles["Status"].set("✓ Rules met", "Ready to export", fg=T.SUCCESS, bg=T.SUCCESS_LIGHT)
+        self.change_tree.delete(*self.change_tree.get_children())
+        for c in changes:
+            self.change_tree.insert("", "end", values=(f"{c.day:%a %d %b}", c.who, c.old or "-", c.new or "-"), tags=("chg",))
+        if self.published:
+            self.published_var.set(f"Published {self.published_at}. {len(changes)} change(s) since then." if changes else f"Published {self.published_at}. No changes since then.")
         else:
-            self.tiles["Status"].set("✗ Needs fixes", "See checks below", fg=T.DANGER, bg=T.DANGER_LIGHT)
+            self.published_var.set("Not published yet. Click 'Mark as published' when you share the roster to start tracking changes.")
+        self.bottom_nb.tab(1, text=f"  Changes since published ({len(changes)})  " if changes else "  Changes since published  ")
+
+        if errors == 0:
+            self.tiles["Status"].set("✓ Rules met", "Ready to share", fg=T.SUCCESS, bg=T.SUCCESS_LIGHT)
+        else:
+            self.tiles["Status"].set("✗ Fix rules", "See checks below", fg=T.DANGER, bg=T.DANGER_LIGHT)
         self.tiles["Rule violations"].set(str(errors), "mandatory rules", fg=T.DANGER if errors else T.TEXT)
         self.tiles["Warnings"].set(str(warnings), "requests not met", fg="#B45309" if warnings else T.TEXT)
         cfg = self.roster.config
         nights = [self.roster.counts(n)["N"] for n in cfg.engineer_names]
-        prim = [self.roster.counts(e.name)["Primary"] for e in cfg.engineers if not e.is_sme]
-        self.tiles["Nights per person"].set(f"{min(nights)}–{max(nights)}", f"average {statistics.mean(nights):.1f}")
-        if prim:
-            self.tiles["Primary on-call per person"].set(f"{min(prim)}–{max(prim)}", f"across {len(prim)} non-SME engineers")
-        self.status.set("Roster ready - hover over a cell for details, click to edit")
+        sub = f"average {statistics.mean(nights):.1f}"
+        if cfg.prior_counts:
+            totals = [self.roster.total_counts(n)["N"] for n in cfg.engineer_names]
+            sub = f"incl. previous months: {min(totals)}–{max(totals)}"
+        self.tiles["Nights / person"].set(f"{min(nights)}–{max(nights)}", sub)
+        met, requested = preference_stats(self.roster)
+        self.tiles["Preferences met"].set(f"{met}/{requested}" if requested else "—", "preferred shifts given" if requested else "no preferences set")
+        locks = self.roster.locks
+        n_locks = len(locks.cells) + len(locks.primary) + len(locks.secondary)
+        if self.published:
+            self.tiles["Changes"].set(
+                str(len(changes)), f"since published · {n_locks} locked", fg=CHANGED_COLOR if changes else T.TEXT
+            )
+        else:
+            self.tiles["Changes"].set("—", f"not published · {n_locks} locked")
+        self.status.set("Roster ready - hover over a cell for details, click to edit, lock or swap")
 
     def _remember_dir(self, path):
         self.last_dir = os.path.dirname(os.path.abspath(path))
@@ -1047,6 +1502,34 @@ class RosterApp(tk.Tk):
                 self.status.set(f"Exported {path}")
             except OSError as exc:
                 messagebox.showerror("Export failed", str(exc), parent=self)
+
+    def export_ics(self):
+        if not self._require_roster():
+            return
+        # Use the timings currently on the Rules page.
+        try:
+            times = {sh: (parse_time(a.get()), parse_time(b.get())) for sh, (a, b) in self.time_vars.items()}
+        except ValueError as exc:
+            messagebox.showerror("Shift timings", f"{exc}\n\nFix the shift timings on the Rules page.", parent=self)
+            return
+        folder = filedialog.askdirectory(parent=self, initialdir=self.last_dir, title="Folder for the calendar files")
+        if not folder:
+            return
+        self.roster.config.shift_times.update(times)
+        try:
+            paths = ics.export_all(self.roster, folder)
+        except OSError as exc:
+            messagebox.showerror("Export failed", str(exc), parent=self)
+            return
+        self.last_dir = folder
+        messagebox.showinfo(
+            "Calendar invites created",
+            f"Created {len(paths)} calendar files in:\n{folder}\n\n"
+            "Send each engineer their own file. Opening it (or importing it in Outlook / Google Calendar) "
+            "adds their shifts, on-call days, comp offs and leave. 'Team - roster ….ics' has everyone.",
+            parent=self,
+        )
+        self.status.set(f"Exported {len(paths)} calendar files to {folder}")
 
 
 def main():

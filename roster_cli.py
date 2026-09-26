@@ -1,13 +1,14 @@
 """Generate a roster without the GUI.
 
     python roster_cli.py examples/sample_config.json -o roster.xlsx
+    python roster_cli.py november.json --previous october_roster.json --save november_roster.json --ics calendars/
 """
 
 import argparse
 import json
 import sys
 
-from roster_tool import export
+from roster_tool import export, ics, storage
 from roster_tool.model import RosterConfig
 from roster_tool.scheduler import generate
 from roster_tool.validator import ERROR, count
@@ -17,10 +18,16 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("config", help="inputs JSON (as saved from the GUI)")
     ap.add_argument("-o", "--output", help="write roster to .xlsx or .csv")
+    ap.add_argument("--previous", help="previous month's roster file, for comp off carry-over and fairness")
+    ap.add_argument("--save", help="save the roster file (can be reopened in the app)")
+    ap.add_argument("--ics", metavar="DIR", help="write calendar invites (.ics) to this folder")
     args = ap.parse_args(argv)
 
     with open(args.config, encoding="utf-8") as fh:
-        cfg = RosterConfig.from_dict(json.load(fh))
+        inputs = json.load(fh)
+    if args.previous:
+        inputs["carry_over"] = storage.carry_over_from(storage.load_roster_file(args.previous).roster)
+    cfg = RosterConfig.from_dict(inputs)
     roster, issues = generate(cfg)
 
     width = max(len(n) for n in cfg.engineer_names)
@@ -44,6 +51,11 @@ def main(argv=None):
         else:
             export.to_excel(roster, args.output, issues)
         print(f"Saved {args.output}")
+    if args.save:
+        storage.save_roster_file(args.save, inputs, roster)
+        print(f"Saved {args.save}")
+    if args.ics:
+        print(f"Wrote {len(ics.export_all(roster, args.ics))} calendar files to {args.ics}")
     return 1 if count(issues, ERROR) else 0
 
 
