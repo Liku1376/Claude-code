@@ -195,6 +195,15 @@ class RosterConfig:
     def is_off_day(self, d: date) -> bool:
         return self.day_type(d) in (WEEKEND, HOLIDAY)
 
+    def comp_off_day(self, night: date) -> date:
+        """The comp off for a night shift on ``night``: the next working
+        (or freeze) day, skipping weekends and holidays. May fall in the
+        next month."""
+        d = night + timedelta(days=1)
+        while self.is_off_day(d):
+            d += timedelta(days=1)
+        return d
+
     def holiday_name(self, d: date) -> str:
         for h in self.holidays:
             if h.day == d:

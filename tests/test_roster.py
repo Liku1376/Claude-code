@@ -51,8 +51,17 @@ def assert_mandatory_rules(roster):
             assert roster.on_shift(d, MORNING), f"no morning on {d}"
             assert roster.on_shift(d, NIGHT), f"no night on {d}"
         for n in cfg.engineer_names:
-            if roster.code(n, d) == NIGHT and d != cfg.days[-1]:
-                assert roster.code(n, d + timedelta(days=1)) == COMP_OFF
+            code = roster.code(n, d)
+            if code == COMP_OFF:
+                assert not cfg.is_off_day(d), f"comp off on off day {d}"
+            if code == NIGHT:
+                co = cfg.comp_off_day(d)
+                if co <= cfg.days[-1]:
+                    assert roster.code(n, co) == COMP_OFF
+                rest = d + timedelta(days=1)
+                while rest < co and rest <= cfg.days[-1]:
+                    assert roster.code(n, rest) not in (MORNING, NIGHT, "E")
+                    rest += timedelta(days=1)
         p = roster.primary[d]
         assert p not in sme
         assert roster.code(p, d) not in (MORNING, NIGHT, COMP_OFF, LEAVE, LONG_LEAVE)
@@ -131,7 +140,7 @@ def test_validator_flags_manual_violations():
     roster.grid[night][d + timedelta(days=1)] = MORNING  # no comp off
     roster.primary[d] = "S0"  # SME as primary
     msgs = [i.message for i in errors(validate(roster))]
-    assert any("not on comp off" in m for m in msgs)
+    assert any("comp off is due" in m for m in msgs)
     assert any("is an SME" in m for m in msgs)
 
 
@@ -181,3 +190,35 @@ def test_exports(tmp_path):
     xlsx = tmp_path / "r.xlsx"
     export.to_excel(roster, str(xlsx), issues)
     assert xlsx.stat().st_size > 0
+
+
+def test_friday_night_comp_off_moves_to_monday():
+    cfg = config()
+    roster, issues = generate(cfg)
+    assert errors(issues) == []
+    fri = date(2026, 10, 9)
+    worker = roster.on_shift(fri, NIGHT)[0]
+    assert roster.code(worker, date(2026, 10, 10)) == WEEK_OFF
+    assert roster.code(worker, date(2026, 10, 11)) == WEEK_OFF
+    assert roster.code(worker, date(2026, 10, 12)) == COMP_OFF
+    # Resting engineers are not put on call before their comp off.
+    assert roster.primary[date(2026, 10, 10)] != worker
+
+
+def test_night_before_holiday_comp_off_skips_holiday():
+    # Thu 1 Oct night, Fri 2 Oct holiday, weekend -> comp off Mon 5 Oct.
+    cfg = config(holidays=[{"date": "2", "name": "Holiday"}])
+    assert cfg.comp_off_day(date(2026, 10, 1)) == date(2026, 10, 5)
+    roster, issues = generate(cfg)
+    assert errors(issues) == []
+    worker = roster.on_shift(date(2026, 10, 1), NIGHT)[0]
+    assert roster.code(worker, date(2026, 10, 2)) == HOLIDAY_OFF
+    assert roster.code(worker, date(2026, 10, 5)) == COMP_OFF
+
+
+def test_comp_off_on_weekend_is_flagged():
+    cfg = config()
+    roster, _ = generate(cfg)
+    roster.grid["N0"][date(2026, 10, 10)] = COMP_OFF  # a Saturday
+    msgs = [i.message for i in errors(validate(roster))]
+    assert any("comp offs must be on working days" in m for m in msgs)

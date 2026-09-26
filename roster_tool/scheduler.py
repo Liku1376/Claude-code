@@ -80,17 +80,23 @@ def _build(cfg: RosterConfig, rng: random.Random) -> Roster:
     primary: dict[date, str] = {}
     secondary: dict[date, str] = {}
     stats = {n: Counter() for n in names}
-    comp_off_today: set[str] = set()
+    # Engineer -> day of their pending comp off. Until that day they rest
+    # (weekend/holiday off, no on-call); on that day they are on CO.
+    comp_off_due: dict[str, date] = {}
 
     def can_take_comp_off(name: str, d: date) -> bool:
-        """A night on day d needs the engineer free on d+1 for the comp off."""
-        nxt = d + timedelta(days=1)
-        if nxt not in month_days:
-            return True
-        if cfg.leave_on(name, nxt) or cfg.must_shift(name, nxt):
+        """A night on day d needs the engineer free until their comp off,
+        which is the next working day (weekends/holidays are skipped)."""
+        co = cfg.comp_off_day(d)
+        if co in month_days and (cfg.leave_on(name, co) or cfg.must_shift(name, co)):
             return False
-        ov = cfg.override_on(nxt)
-        return not (ov and name in (ov.primary, ov.secondary))
+        rest = d + timedelta(days=1)
+        while rest <= co and rest in month_days:
+            ov = cfg.override_on(rest)
+            if ov and name in (ov.primary, ov.secondary):
+                return False
+            rest += timedelta(days=1)
+        return True
 
     def pick(candidates, key):
         candidates = list(candidates)
@@ -109,8 +115,12 @@ def _build(cfg: RosterConfig, rng: random.Random) -> Roster:
             lv = cfg.leave_on(n, d)
             if lv:
                 grid[n][d] = LONG_LEAVE if lv.long_leave else LEAVE
-            elif n in comp_off_today:
+            elif comp_off_due.get(n) == d:
                 grid[n][d] = COMP_OFF
+                del comp_off_due[n]
+            elif n in comp_off_due:
+                # Resting after a night, before the comp off (weekend/holiday).
+                grid[n][d] = HOLIDAY_OFF if dtype == HOLIDAY else WEEK_OFF
             else:
                 pool.append(n)
         rng.shuffle(pool)
@@ -196,6 +206,8 @@ def _build(cfg: RosterConfig, rng: random.Random) -> Roster:
             grid[n][d] = shift
             stats[n][shift] += 1
 
-        comp_off_today = {n for n, shift in assigned.items() if shift == NIGHT}
+        for n, shift in assigned.items():
+            if shift == NIGHT:
+                comp_off_due[n] = cfg.comp_off_day(d)
 
     return Roster(cfg, grid, primary, secondary)

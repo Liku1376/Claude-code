@@ -13,6 +13,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from . import export
 from . import theme as T
+from .datepicker import DateEntry
 from .model import (
     ALL_CODES,
     CODE_DESCRIPTIONS,
@@ -23,6 +24,7 @@ from .model import (
     Roster,
     RosterConfig,
     empty_config_dict,
+    parse_date,
 )
 from .scheduler import generate
 from .validator import ERROR, INFO, WARNING, count, validate
@@ -32,7 +34,7 @@ from .validator import ERROR, INFO, WARNING, count, validate
 BASE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SAMPLE_CONFIG = os.path.join(BASE_DIR, "examples", "sample_config.json")
 ICON_PNG = os.path.join(BASE_DIR, "assets", "icon.png")
-DATE_HINT = "Dates: YYYY-MM-DD, DD/MM/YYYY or just the day number of the roster month."
+DATE_HINT = "Use the calendar button or type a date (e.g. 2026-10-14 or 14)."
 LEGEND_NAMES = {"M": "Morning", "E": "Evening", "N": "Night", "CO": "Comp off", "L": "Leave", "LL": "Long leave", "WO": "Weekend", "H": "Holiday"}
 DESIGNATIONS = ("Engineer", "Senior Engineer", "Lead Engineer", "SME", "Manager")
 
@@ -60,9 +62,14 @@ class RecordEditor(ttk.Frame):
     """A form card + table card for editing a list of records.
 
     ``fields`` is a list of (key, label, kind, extra) where kind is one of
-    "entry", "combo" (editable), "choice" (read-only combo) or "check".
-    For combos, ``extra`` is a list of values or a callable returning one.
+    "entry", "date" (entry + calendar picker), "combo" (editable), "choice"
+    (read-only combo) or "check". For combos, ``extra`` is a list of values
+    or a callable returning one.
     """
+
+    # Set by the app: supplies the roster month, weekends and holidays so the
+    # calendar popups open on the right month and highlight days off.
+    date_context = None
 
     def __init__(self, master, title, fields, on_change=None, hint="", noun="entry", columns=2):
         super().__init__(master)
@@ -88,6 +95,14 @@ class RecordEditor(ttk.Frame):
                 var = tk.StringVar()
                 if kind in ("combo", "choice"):
                     w = ttk.Combobox(cell, textvariable=var, state="readonly" if kind == "choice" else "normal", width=20)
+                elif kind == "date":
+                    ctx = self.date_context
+                    w = DateEntry(
+                        cell, var,
+                        default_date=lambda key=key: self._default_date(key),
+                        is_weekend=ctx.is_weekend if ctx else None,
+                        holiday_name=ctx.holiday_name if ctx else None,
+                    )
                 else:
                     w = ttk.Entry(cell, textvariable=var, width=22)
                 w.pack(anchor="w", fill="x", pady=(3, 0))
@@ -129,6 +144,18 @@ class RecordEditor(ttk.Frame):
         self._redraw()
 
     # -- form helpers --------------------------------------------------------
+    def _default_date(self, key):
+        """Month a calendar opens on: an end date follows the start date,
+        otherwise the roster month."""
+        ctx = self.date_context
+        fallback = ctx.roster_month_start() if ctx else date.today()
+        if key == "end" and "start" in self.vars:
+            try:
+                return parse_date(self.vars["start"].get(), fallback.year, fallback.month)
+            except ValueError:
+                pass
+        return fallback
+
     def refresh_options(self):
         for key, _label, kind, extra in self.fields:
             if kind in ("combo", "choice") and extra is not None:
@@ -522,6 +549,7 @@ class RosterApp(tk.Tk):
         self.issues = []
         self.config_path: str | None = None
 
+        RecordEditor.date_context = self
         self._build_menu()
         self._build_header()
         body = ttk.Frame(self)
@@ -637,20 +665,40 @@ class RosterApp(tk.Tk):
         row = ttk.Frame(tab)
         row.pack(fill="both", expand=True, pady=(14, 0))
         self.holidays = RecordEditor(
-            row, "Holiday", [("date", "Date", "entry", None), ("name", "Name", "entry", None)],
+            row, "Holiday", [("date", "Date", "date", None), ("name", "Name", "entry", None)],
             hint=DATE_HINT, noun="holiday", on_change=self._inputs_changed,
         )
         self.holidays.grid(row=0, column=0, sticky="nsew", padx=(0, 7))
         self.freeze = RecordEditor(
             row,
             "Freeze period",
-            [("start", "Start date", "entry", None), ("end", "End date", "entry", None), ("note", "Note", "entry", None)],
+            [("start", "Start date", "date", None), ("end", "End date", "date", None), ("note", "Note", "entry", None)],
             hint="Freeze days are exempt from the minimum Morning/Night rule (see Rules).",
             noun="freeze period", on_change=self._inputs_changed,
         )
         self.freeze.grid(row=0, column=1, sticky="nsew", padx=(7, 0))
         row.columnconfigure((0, 1), weight=1, uniform="cal")
         row.rowconfigure(0, weight=1)
+
+    # -- date context for calendar pickers --------------------------------------
+    def roster_month_start(self) -> date:
+        try:
+            return date(int(self.year_var.get()), list(calendar.month_name).index(self.month_var.get()), 1)
+        except (ValueError, AttributeError):
+            return date.today().replace(day=1)
+
+    def is_weekend(self, d: date) -> bool:
+        return self.weekend_vars[d.weekday()].get()
+
+    def holiday_name(self, d: date) -> str:
+        start = self.roster_month_start()
+        for row in self.holidays.get_rows() if hasattr(self, "holidays") else []:
+            try:
+                if parse_date(row.get("date"), start.year, start.month) == d:
+                    return row.get("name") or "Holiday"
+            except ValueError:
+                continue
+        return ""
 
     def _names(self, sme=None):
         rows = self.team.get_rows() if hasattr(self, "team") else []
@@ -659,8 +707,8 @@ class RosterApp(tk.Tk):
     def _build_leave_tabs(self):
         fields = [
             ("engineer", "Engineer", "choice", lambda: self._names()),
-            ("start", "Start date", "entry", None),
-            ("end", "End date (optional)", "entry", None),
+            ("start", "Start date", "date", None),
+            ("end", "End date (optional)", "date", None),
             ("note", "Note", "entry", None),
         ]
         tab = self._add_page("Leave", "Planned days off. Leave the end date empty for a single day. Shown as L.", "Leave")
@@ -678,8 +726,8 @@ class RosterApp(tk.Tk):
             [
                 ("engineer", "Engineer", "choice", lambda: self._names()),
                 ("shift", "Shift", "choice", [SHIFT_NAMES[s] for s in SHIFTS]),
-                ("start", "Start date", "entry", None),
-                ("end", "End date (optional)", "entry", None),
+                ("start", "Start date", "date", None),
+                ("end", "End date (optional)", "date", None),
                 ("mode", "Type", "choice", ["Must", "Avoid"]),
                 ("note", "Note", "entry", None),
             ],
@@ -694,7 +742,7 @@ class RosterApp(tk.Tk):
             tab,
             "Set on-call for a day",
             [
-                ("date", "Date", "entry", None),
+                ("date", "Date", "date", None),
                 ("primary", "Primary (non-SME)", "choice", lambda: [""] + self._names(sme=False)),
                 ("secondary", "Secondary (SME)", "choice", lambda: [""] + self._names(sme=True)),
             ],
@@ -736,7 +784,7 @@ class RosterApp(tk.Tk):
         outer.pack(fill="x", pady=(14, 0))
         items = (
             ("Coverage", "At least 1 engineer on Morning and Night on working days (freeze, weekends and holidays excluded)."),
-            ("Comp off", "The day after every night shift is a comp off (CO)."),
+            ("Comp off", "Every night shift earns a comp off (CO) on the next working day - never on a weekend or holiday."),
             ("Primary on-call", "Every day - a non-SME engineer who is not on Morning or Night that day."),
             ("Secondary on-call", "An SME engineer - not required on weekends and holidays."),
             ("Requests", "Leave, long leave and shift requirements are honoured; anything that can't be met is reported."),

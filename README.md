@@ -68,8 +68,9 @@ To generate without the GUI, run
 | 6. On-Call | Optional: fix the primary/secondary on-call engineer for a given day. Every other day is assigned automatically, rotating fairly |
 | 7. Rules | Minimum engineers per shift for each day type; generator settings |
 
-Dates can be typed as `YYYY-MM-DD`, `DD/MM/YYYY`, or just the day number
-(e.g. `14`) within the selected month. Use **File → Save inputs** to save
+Every date field has a calendar button that opens a month view, with
+weekends and holidays highlighted. You can also type dates as `YYYY-MM-DD`,
+`DD/MM/YYYY`, or just the day number (e.g. `14`) within the selected month. Use **File → Save inputs** to save
 everything as a JSON file you can reopen and reuse next month.
 
 ## Mandatory rules
@@ -77,8 +78,11 @@ everything as a JSON file you can reopen and reuse next month.
 1. **Coverage:** at least 1 engineer on Morning and 1 on Night on working days.
    Freeze periods, weekends and holidays are excluded. The minimums can be
    changed per day type on the Rules tab.
-2. **Comp off:** the day after every night shift is a comp off (`CO`). A night
-   on the last day of the month is flagged as a carry-over into next month.
+2. **Comp off:** every night shift earns a comp off (`CO`) on the **next
+   working day**. Comp offs never fall on a weekend or holiday. After a
+   Friday night, for example, the engineer is off over the weekend and takes
+   the comp off on Monday. They get no shifts or on-call until then. If the
+   comp off falls in the next month, it is flagged as a carry-over.
 3. **Primary on-call** (every day, including weekends and holidays): a
    **non-SME** engineer who is **not** on Morning or Night shift that day.
    On working days they are on the Evening shift.

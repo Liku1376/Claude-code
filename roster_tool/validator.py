@@ -18,6 +18,7 @@ from .model import (
     NIGHT,
     SHIFT_NAMES,
     SHIFTS,
+    WORKING_CODES,
     Roster,
 )
 
@@ -55,15 +56,24 @@ def validate(roster: Roster) -> list[Issue]:
             if have < need:
                 issues.append(Issue(ERROR, d, f"{dtype} day needs {need} on {SHIFT_NAMES[shift]} shift, has {have}"))
 
-        # Rule 2: comp off on the day after every night shift.
+        # Rule 2: every night shift earns a comp off on the next working day
+        # (weekends and holidays are skipped), with no shifts in between.
         for name in cfg.engineer_names:
-            if roster.code(name, d) != NIGHT:
+            code = roster.code(name, d)
+            if code == COMP_OFF and off_day:
+                issues.append(Issue(ERROR, d, f"{name} has a comp off on a {dtype.lower()} - comp offs must be on working days"))
+            if code != NIGHT:
                 continue
-            nxt = d + timedelta(days=1)
-            if d == last_day:
-                issues.append(Issue(INFO, d, f"{name} works night on the last day - comp off due on {nxt:%d %b} (next month)"))
-            elif roster.code(name, nxt) != COMP_OFF:
-                issues.append(Issue(ERROR, nxt, f"{name} worked night on {d:%d %b} but is not on comp off"))
+            co = cfg.comp_off_day(d)
+            if co > last_day:
+                issues.append(Issue(INFO, d, f"{name} works night on {d:%d %b} - comp off due on {co:%a %d %b} (next month)"))
+            elif roster.code(name, co) != COMP_OFF:
+                issues.append(Issue(ERROR, co, f"{name} worked night on {d:%d %b} - comp off is due on this working day"))
+            rest = d + timedelta(days=1)
+            while rest < co and rest <= last_day:
+                if roster.code(name, rest) in WORKING_CODES:
+                    issues.append(Issue(ERROR, rest, f"{name} is rostered to work before taking the comp off for the {d:%d %b} night"))
+                rest += timedelta(days=1)
 
         # Rule 3: primary on-call - every day, non-SME, not in Morning/Night.
         p = roster.primary.get(d, "")
