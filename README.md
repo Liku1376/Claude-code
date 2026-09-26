@@ -11,15 +11,17 @@ is listed so you can fix it.
 
 ## Download and run (no installation needed)
 
-Download the file for your computer from the repository's **Releases** page
-(or from the latest **Actions → Build desktop app** run under "Artifacts").
-Python, Tkinter and the Excel library are all bundled inside.
+Download the file for your computer. Python, Tkinter and the Excel library
+are all bundled inside.
 
-| System | File | How to start |
+| System | Download | How to start |
 | --- | --- | --- |
-| Windows | `RosterCreator-Windows.exe` | Double-click it. If SmartScreen says "Windows protected your PC", click **More info → Run anyway** (the app is not code-signed). |
-| macOS (Apple Silicon) | `RosterCreator-macOS.zip` | Unzip, then **right-click RosterCreator.app → Open → Open** the first time (the app is not notarised). |
-| Linux | `RosterCreator-Linux` | `chmod +x RosterCreator-Linux && ./RosterCreator-Linux` |
+| 🪟 Windows | [**RosterCreator-Windows.exe**](https://github.com/Liku1376/Claude-code/releases/latest/download/RosterCreator-Windows.exe) | Double-click it. If SmartScreen says "Windows protected your PC", click **More info → Run anyway** (the app is not code-signed). |
+| 🍎 macOS (Apple Silicon) | [**RosterCreator-macOS.zip**](https://github.com/Liku1376/Claude-code/releases/latest/download/RosterCreator-macOS.zip) | Unzip, then **right-click RosterCreator.app → Open → Open** the first time (the app is not notarised). |
+| 🐧 Linux | [**RosterCreator-Linux**](https://github.com/Liku1376/Claude-code/releases/latest/download/RosterCreator-Linux) | `chmod +x RosterCreator-Linux && ./RosterCreator-Linux` |
+
+These links always point to the newest release. All versions are on the
+[Releases page](https://github.com/Liku1376/Claude-code/releases).
 
 Use **File → Load sample data** to see a filled-in example, then press
 **Generate roster** (top right).
