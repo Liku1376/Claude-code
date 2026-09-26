@@ -8,7 +8,10 @@ served by Python's standard library, so it works wherever a permitted Python
 interpreter can run.
 """
 
+# The actual server lives in roster_tool/webapp.py; this file is just a
+# convenient entry point (``python roster_web.py``).
 from roster_tool.webapp import main
 
+# When run directly, start the web server.
 if __name__ == "__main__":
     main()
