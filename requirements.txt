@@ -1,3 +1,6 @@
-# Optional - only needed for Excel export. The GUI itself uses Tkinter from
-# the Python standard library.
+# The app needs no third-party packages: the GUI uses Tkinter and the web app
+# and Excel export use only the Python standard library.
+#
+# openpyxl is OPTIONAL. If it is installed, Excel exports use it for slightly
+# richer formatting; without it, a built-in writer produces the .xlsx instead.
 openpyxl>=3.1

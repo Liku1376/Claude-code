@@ -71,12 +71,15 @@ run this on Windows; to get the macOS app, run it on a Mac.
 
 ### Running from source
 
-Needs Python 3.10+ with Tkinter.
+Needs Python 3.10+ with Tkinter. No other packages are required - Excel,
+CSV and calendar exports all work with the standard library.
 
 ```bash
-pip install -r requirements.txt   # optional, only for Excel export
 python roster_app.py
 ```
+
+Installing `openpyxl` (`pip install -r requirements.txt`) is optional; when
+present, Excel exports use it for slightly richer formatting.
 
 To generate without the GUI, run
 `python roster_cli.py examples/sample_config.json -o roster.xlsx`.

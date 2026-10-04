@@ -363,3 +363,22 @@ def test_excel_export_survives_control_characters(tmp_path):
     import openpyxl
     wb = openpyxl.load_workbook(str(path))
     assert wb.active["A1"].value == "Engineer"
+
+
+def test_stdlib_xlsx_writer_produces_valid_file(tmp_path):
+    # The built-in .xlsx writer (used when openpyxl is absent) must produce a
+    # file openpyxl can read back, with colours and both sheets.
+    pytest.importorskip("openpyxl")
+    d = {**empty_config_dict(2026, 10), "engineers": team(), "attempts": 10, "seed": "2"}
+    d["engineers"][0]["designation"] = "Senior\x07Engineer"  # control char
+    cfg = RosterConfig.from_dict(d)
+    roster, issues = generate(cfg)
+    path = tmp_path / "stdlib.xlsx"
+    export._to_xlsx_stdlib(roster, str(path), issues)
+    import openpyxl
+    wb = openpyxl.load_workbook(str(path))
+    assert wb.sheetnames[0].startswith("Roster")
+    assert "Issues" in wb.sheetnames
+    ws = wb[wb.sheetnames[0]]
+    assert ws["A1"].value == "Engineer"
+    assert ws.freeze_panes == "D4"
