@@ -1,0 +1,11 @@
+# One NSE symbol per line (as in screener.in URLs). Lines starting with # are ignored.
+PIDILITIND
+ASIANPAINT
+NESTLEIND
+HDFCAMC
+ASTRAL
+PAGEIND
+RELAXO
+BERGEPAINT
+DIVISLAB
+LALPATHLAB

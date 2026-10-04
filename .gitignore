@@ -6,3 +6,5 @@ __pycache__/
 build/
 dist/
 *.spec
+.screener_cache/
+multibagger_report.*

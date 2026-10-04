@@ -5,6 +5,12 @@ engineering team. You enter the team, leave, shift requests and calendar, and
 it generates a roster that meets the mandatory rules. Any rule it can't meet
 is listed so you can fix it.
 
+> **Also in this repo — Multibagger Screener for Indian stocks.** A command-line
+> tool that collects data from Screener.in and runs it through the Value
+> Investing Process to rank multibagger candidates:
+> `python multibagger_cli.py --symbols-file examples/watchlist.txt`.
+> See [docs/MULTIBAGGER.md](docs/MULTIBAGGER.md).
+
 ![Roster tab](docs/roster_screenshot.png)
 
 ![Team tab](docs/team_screenshot.png)
