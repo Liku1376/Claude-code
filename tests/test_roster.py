@@ -349,3 +349,17 @@ def test_swapping_a_night_moves_its_comp_off():
     assert new.code(worker, co) == roster.code(other, co)
     comp_off_errors = [i for i in errors(validate(new)) if "comp off" in i.message]
     assert comp_off_errors == []
+
+
+def test_excel_export_survives_control_characters(tmp_path):
+    pytest.importorskip("openpyxl")
+    cfg = config()
+    roster, issues = generate(cfg)
+    # A control char pasted into a non-key field must not break the export.
+    cfg.engineers[0].designation = "Senior\x07Engineer"
+    cfg.engineers[1].name  # touch to be explicit
+    path = tmp_path / "r.xlsx"
+    export.to_excel(roster, str(path), issues)   # must not raise
+    import openpyxl
+    wb = openpyxl.load_workbook(str(path))
+    assert wb.active["A1"].value == "Engineer"

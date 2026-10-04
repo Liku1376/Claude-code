@@ -1739,8 +1739,10 @@ class RosterApp(tk.Tk):
                 export.to_excel(self.roster, path, self.issues)
                 self._remember_dir(path)
                 self.status.set(f"Exported {path}")
-            except (OSError, RuntimeError) as exc:
-                messagebox.showerror("Export failed", str(exc), parent=self)
+            except Exception as exc:
+                # Catch everything (e.g. openpyxl errors) so a failed export
+                # always tells the user why instead of silently doing nothing.
+                messagebox.showerror("Excel export failed", f"{exc}", parent=self)
 
     def export_csv(self):
         # Save the roster as a CSV file.
@@ -1752,8 +1754,8 @@ class RosterApp(tk.Tk):
                 export.to_csv(self.roster, path)
                 self._remember_dir(path)
                 self.status.set(f"Exported {path}")
-            except OSError as exc:
-                messagebox.showerror("Export failed", str(exc), parent=self)
+            except Exception as exc:
+                messagebox.showerror("CSV export failed", f"{exc}", parent=self)
 
     def export_ics(self):
         # Save one .ics calendar per engineer plus a team calendar into a folder.
@@ -1772,8 +1774,8 @@ class RosterApp(tk.Tk):
         self.roster.config.shift_times.update(times)
         try:
             paths = ics.export_all(self.roster, folder)
-        except OSError as exc:
-            messagebox.showerror("Export failed", str(exc), parent=self)
+        except Exception as exc:
+            messagebox.showerror("Calendar export failed", f"{exc}", parent=self)
             return
         self.last_dir = folder
         messagebox.showinfo(

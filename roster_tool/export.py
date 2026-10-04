@@ -7,13 +7,24 @@ frozen headers and a legend.
 
 from __future__ import annotations
 
-# The standard-library CSV writer.
+# The standard-library CSV writer; ``re`` strips characters Excel rejects.
 import csv
+import re
 
 # Codes, descriptions and weekday names used to build the table.
 from .model import ALL_CODES, CODE_DESCRIPTIONS, WEEKDAY_NAMES, Roster
 # Issue is only imported for the type hint on to_excel.
 from .validator import Issue
+
+# Control characters that openpyxl refuses to put in a worksheet (they can
+# sneak in when names/notes are pasted from other apps). We strip them so an
+# Excel export never fails with IllegalCharacterError.
+_ILLEGAL_XLSX = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+def _clean(value):
+    # Remove illegal control characters from a string; leave non-strings as-is.
+    return _ILLEGAL_XLSX.sub("", value) if isinstance(value, str) else value
 
 # Cell background colours (hex, no '#') shared by the GUI grid and Excel export.
 CODE_COLORS = {
@@ -113,6 +124,8 @@ def to_excel(roster: Roster, path: str, issues: list[Issue] | None = None) -> No
     # Write and style every cell (openpyxl rows/cols are 1-based).
     for r, row in enumerate(rows, 1):
         for c, value in enumerate(row, 1):
+            # Strip any characters Excel would reject (from pasted names etc.).
+            value = _clean(value)
             # Summary numbers become real numbers; everything else stays text.
             cell = ws.cell(row=r, column=c, value=int(value) if value.isdigit() and r > 3 else value)
             cell.border = border
@@ -156,7 +169,8 @@ def to_excel(roster: Roster, path: str, issues: list[Issue] | None = None) -> No
         ws2 = wb.create_sheet("Issues")
         ws2.append(["Severity", "Date", "Message"])
         for i in issues:
-            ws2.append([i.severity, i.day.isoformat() if i.day else "", i.message])
+            # Issue messages can contain engineer names, so clean them too.
+            ws2.append([i.severity, i.day.isoformat() if i.day else "", _clean(i.message)])
         if not issues:
             ws2.append(["OK", "", "All mandatory rules are satisfied"])
         ws2.column_dimensions["C"].width = 90

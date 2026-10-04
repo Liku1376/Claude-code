@@ -48,7 +48,10 @@ def main():
         "--add-data", f"{os.path.join(ROOT, 'examples', 'sample_config.json')}{SEP}examples",
         "--add-data", f"{os.path.join(ROOT, 'assets', 'icon.png')}{SEP}assets",
         "--add-data", f"{os.path.join(ROOT, 'roster_tool', 'web')}{SEP}roster_tool/web",
-        "--hidden-import", "openpyxl",          # ensure the Excel library is included
+        # Ensure the Excel library and all its pieces are bundled. --collect-all
+        # pulls in openpyxl's submodules/data; et_xmlfile is its dependency.
+        "--collect-all", "openpyxl",
+        "--hidden-import", "et_xmlfile",
         # Not used by the app; keeps the bundle small.
         "--exclude-module", "PIL",
         "--exclude-module", "pytest",
