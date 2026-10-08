@@ -27,7 +27,9 @@ CONTENT_TYPES = {".html": "text/html; charset=utf-8", ".css": "text/css; charset
 # A handful of cities to make entering a birthplace quick: name, lat, lon, tz.
 CITIES = (
     ("Bhubaneswar, India", 20.2961, 85.8245, "Asia/Kolkata"), ("Cuttack, India", 20.4625, 85.8830, "Asia/Kolkata"),
-    ("Puri, India", 19.8135, 85.8312, "Asia/Kolkata"), ("Kolkata, India", 22.5726, 88.3639, "Asia/Kolkata"),
+    ("Puri, India", 19.8135, 85.8312, "Asia/Kolkata"), ("Baripada, India", 21.9347, 86.7350, "Asia/Kolkata"),
+    ("Balasore, India", 21.4942, 86.9317, "Asia/Kolkata"), ("Berhampur, India", 19.3150, 84.7941, "Asia/Kolkata"),
+    ("Sambalpur, India", 21.4669, 83.9812, "Asia/Kolkata"), ("Rourkela, India", 22.2604, 84.8536, "Asia/Kolkata"), ("Kolkata, India", 22.5726, 88.3639, "Asia/Kolkata"),
     ("New Delhi, India", 28.6139, 77.2090, "Asia/Kolkata"), ("Mumbai, India", 19.0760, 72.8777, "Asia/Kolkata"),
     ("Bengaluru, India", 12.9716, 77.5946, "Asia/Kolkata"), ("Chennai, India", 13.0827, 80.2707, "Asia/Kolkata"),
     ("Hyderabad, India", 17.3850, 78.4867, "Asia/Kolkata"), ("Pune, India", 18.5204, 73.8567, "Asia/Kolkata"),
