@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zodiac Studio</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Ctext y=%2213%22 font-size=%2214%22%3E%E2%9C%A6%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="logo">✦</span> Zodiac Studio</div>
+  <div class="tagline">Western · Vedic · Chinese · Numerology — past, present &amp; future</div>
+</header>
+
+<main>
+  <section class="card profile" id="profile">
+    <h2>Birth details</h2>
+    <div class="grid">
+      <label>Name <input id="p-name" placeholder="Optional (used for numerology)"></label>
+      <label>Date of birth <input id="p-date" type="date" required></label>
+      <label>Time of birth <input id="p-time" type="time" value="12:00"></label>
+      <label class="check"><input id="p-unknown" type="checkbox"> Time unknown</label>
+      <label class="wide">Birthplace
+        <input id="p-city" list="cities" placeholder="Start typing a city, or enter coordinates below">
+        <datalist id="cities"></datalist>
+      </label>
+      <label>Latitude <input id="p-lat" type="number" step="0.0001" placeholder="20.2961"></label>
+      <label>Longitude <input id="p-lon" type="number" step="0.0001" placeholder="85.8245"></label>
+      <label>Time zone <input id="p-tz" placeholder="Asia/Kolkata or +05:30"></label>
+    </div>
+    <p class="hint">Saved in this browser only. East longitude and north latitude are positive.</p>
+  </section>
+
+  <nav class="tabs" id="tabs">
+    <button data-tab="chart" class="active">Birth Chart</button>
+    <button data-tab="vedic">Vedic Kundli</button>
+    <button data-tab="horoscope">Horoscope</button>
+    <button data-tab="forecast">Forecast</button>
+    <button data-tab="timeline">Life Timeline</button>
+    <button data-tab="compat">Compatibility</button>
+    <button data-tab="sky">Panchang &amp; Sky</button>
+    <button data-tab="more">Chinese &amp; Numerology</button>
+  </nav>
+
+  <section class="tab card" id="tab-chart">
+    <div class="toolbar">
+      <label>Zodiac <select id="c-zodiac"><option value="tropical">Tropical (Western)</option><option value="sidereal">Sidereal (Lahiri)</option></select></label>
+      <label>Houses <select id="c-houses"><option value="porphyry">Porphyry</option><option value="equal">Equal</option><option value="whole">Whole sign</option></select></label>
+      <button class="primary" id="c-go">Calculate chart</button>
+    </div>
+    <div id="chart-out" class="out"></div>
+  </section>
+
+  <section class="tab card hidden" id="tab-vedic">
+    <div class="toolbar">
+      <label>Dasha status as of <input id="v-on" type="date"></label>
+      <button class="primary" id="v-go">Calculate kundli</button>
+    </div>
+    <div id="vedic-out" class="out"></div>
+  </section>
+
+  <section class="tab card hidden" id="tab-horoscope">
+    <div class="toolbar">
+      <label>Sign <select id="h-sign"><option value="">From my birth date</option></select></label>
+      <label>Period <select id="h-period"><option value="day">Day</option><option value="week">Week</option><option value="month">Month</option><option value="year">Year</option></select></label>
+      <label>Date <input id="h-date" type="date"></label>
+      <button id="h-prev" title="Previous">◀</button><button id="h-next" title="Next">▶</button>
+      <button class="primary" id="h-go">Read horoscope</button>
+    </div>
+    <div id="horoscope-out" class="out"></div>
+  </section>
+
+  <section class="tab card hidden" id="tab-forecast">
+    <div class="toolbar">
+      <label>Any date — past, present or future <input id="f-on" type="date"></label>
+      <button id="f-prev" title="Previous day">◀</button><button id="f-next" title="Next day">▶</button>
+      <button class="primary" id="f-go">Forecast</button>
+    </div>
+    <div id="forecast-out" class="out"></div>
+  </section>
+
+  <section class="tab card hidden" id="tab-timeline">
+    <div class="toolbar">
+      <label>Years from birth <input id="t-years" type="number" min="10" max="120" value="90"></label>
+      <label>Show <select id="t-filter"><option value="all">Everything</option><option value="past">Past</option><option value="current">Now</option><option value="future">Future</option></select></label>
+      <button class="primary" id="t-go">Build timeline</button>
+    </div>
+    <div id="timeline-out" class="out"></div>
+  </section>
+
+  <section class="tab card hidden" id="tab-compat">
+    <h3>Partner's birth details</h3>
+    <div class="grid">
+      <label>Name <input id="q-name"></label>
+      <label>Date of birth <input id="q-date" type="date"></label>
+      <label>Time of birth <input id="q-time" type="time" value="12:00"></label>
+      <label class="wide">Birthplace <input id="q-city" list="cities"></label>
+      <label>Latitude <input id="q-lat" type="number" step="0.0001"></label>
+      <label>Longitude <input id="q-lon" type="number" step="0.0001"></label>
+      <label>Time zone <input id="q-tz"></label>
+    </div>
+    <div class="toolbar">
+      <label>Guna Milan roles <select id="q-order"><option value="ab">I am the groom, partner the bride</option><option value="ba">Partner is the groom, I am the bride</option></select></label>
+      <button class="primary" id="q-go">Check compatibility</button>
+    </div>
+    <div id="compat-out" class="out"></div>
+  </section>
+
+  <section class="tab card hidden" id="tab-sky">
+    <div class="toolbar">
+      <label>Date <input id="s-date" type="date"></label>
+      <label>Time <input id="s-time" type="time"></label>
+      <button class="primary" id="s-go">Panchang for this moment</button>
+      <label>Year <input id="s-year" type="number" min="1800" max="2200"></label>
+      <button class="primary" id="s-year-go">Sky calendar</button>
+    </div>
+    <p class="hint">Uses the birthplace above as the location; change it to see another city.</p>
+    <div id="sky-out" class="out"></div>
+  </section>
+
+  <section class="tab card hidden" id="tab-more">
+    <div class="toolbar"><button class="primary" id="m-go">Calculate</button></div>
+    <div id="more-out" class="out"></div>
+  </section>
+
+  <p class="disclaimer">Planetary positions are computed astronomically; the interpretations follow
+    traditional astrology and are meant for reflection and entertainment, not as a basis for medical,
+    financial or legal decisions.</p>
+</main>
+<div id="toast" class="toast hidden"></div>
+<script src="app.js"></script>
+</body>
+</html>

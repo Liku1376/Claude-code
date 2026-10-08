@@ -198,6 +198,44 @@ fewest rule violations first, then fewest unmet requests, fewest changes
 from the published roster, the most even workload and the most preferences
 met. Set a random seed on the Rules tab to get the same roster every time.
 
+## Zodiac Studio (astrology web app)
+
+This repository also contains **Zodiac Studio**, a separate local web app
+for astrology calculations about the past, the present and the future. Like
+the roster web app, it uses only Python's standard library:
+
+```bash
+python zodiac_web.py            # opens http://127.0.0.1:8766/
+python zodiac_web.py --port 9000 --no-browser
+```
+
+![Zodiac Studio](docs/zodiac_screenshot.png)
+
+Enter a birth date, time and place once (pick a city or type coordinates and
+a time zone such as `Asia/Kolkata` or `+05:30`), then use the tabs:
+
+| Tab | What it calculates |
+| --- | --- |
+| **Birth Chart** | Western natal chart wheel: Sun to Pluto, North Node, Ascendant and Midheaven, houses (Porphyry, Equal or Whole Sign), aspects, element and modality balance, interpretations. Tropical or sidereal (Lahiri) zodiac. |
+| **Vedic Kundli** | South-Indian Rashi chart, Lagna, Moon sign, janma nakshatra and pada, Mangal Dosha, the birth Panchang, the full **Vimshottari Dasha** (mahadashas and antardashas marked past / now / future) and every **Sade Sati** and Dhaiya period of your life. |
+| **Horoscope** | Daily, weekly, monthly or yearly horoscope for any sign and any date, past or future, built from the real planet positions through solar houses (love, career, money and health ratings, retrogrades, lunations, eclipses). |
+| **Forecast** | Pick any date in your life: transits to your natal chart, the Moon's house, the running dasha, Sade Sati status, numerology personal year / month / day, the Chinese year's effect on your sign, and that day's Panchang. |
+| **Life Timeline** | Every major cycle from birth onwards (Saturn and Jupiter returns, Saturn squares and oppositions, the Uranus opposition, Neptune and Pluto squares, nodal returns, dasha changes, Sade Sati) with ages, exact dates and past / now / future markers. |
+| **Compatibility** | Ashtakoota **Guna Milan** (out of 36, with Nadi and Bhakoot doshas), synastry aspects, sun-sign elements, Chinese zodiac relationship and numerology life paths, combined into one score. |
+| **Panchang & Sky** | Tithi, nakshatra, yoga, karana and vara for any moment and place, plus planet positions; and a year's sky calendar: new and full moons, solar and lunar eclipses, retrograde stations, equinoxes, solstices and sign changes. |
+| **Chinese & Numerology** | Chinese animal, element, polarity and year pillar (the Lunar New Year is computed astronomically), best and clashing signs; life path, birthday, expression, soul urge and personality numbers. |
+
+Positions come from the JPL approximate planetary elements and the main
+terms of Meeus' lunar theory. Checked against a full ephemeris between 1900
+and 2100, the Sun, Moon and planets are usually within a few arc-minutes
+(at worst about a third of a degree for Saturn near 2100), and eclipse and
+retrograde dates match published tables. The interpretations follow traditional astrology and are meant for
+reflection and entertainment.
+
+The code lives in `zodiac_tool/` (`astronomy.py`, `western.py`, `vedic.py`,
+`chinese.py`, `numerology.py`, `forecast.py`, `webapp.py` and the `web/`
+front end); its tests are in `tests/test_zodiac.py`.
+
 ## Development
 
 ```bash
