@@ -3,8 +3,5 @@ __pycache__/
 .venv/
 .pytest_cache/
 *.xlsx
-build/
-dist/
-*.spec
 .screener_cache/
 multibagger_report.*
